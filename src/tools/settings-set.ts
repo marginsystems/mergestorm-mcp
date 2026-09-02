@@ -1,0 +1,62 @@
+import {
+  CommandError,
+  SETTINGS_WRITABLE_KEYS,
+  patchSettings,
+  type Config,
+  type SettingsPatch,
+} from "mergestorm/client";
+import { settingsSummary } from "./settings-get.js";
+import type { ToolPayload } from "./types.js";
+
+/** Read-only on `/api/v1/settings`; the API owns them, agents never write them. */
+export const SETTINGS_READ_ONLY_KEYS = [
+  "cyclone_connected",
+  "github_connected",
+] as const;
+
+/**
+ * Build a PATCH body from raw tool args. Only the Bearer-writable allowlist
+ * passes through; read-only keys and empty patches are usage errors so the
+ * failure is the caller's wording, never a silent no-op.
+ */
+export function settingsPatchFromArgs(
+  args: Record<string, unknown>,
+): SettingsPatch {
+  for (const key of SETTINGS_READ_ONLY_KEYS) {
+    if (args[key] !== undefined) {
+      throw new CommandError(`${key} is read-only and cannot be set.`, 2, "usage");
+    }
+  }
+  const patch: SettingsPatch = {};
+  for (const key of SETTINGS_WRITABLE_KEYS) {
+    const value = args[key];
+    if (value === undefined) continue;
+    if (typeof value !== "boolean") {
+      throw new CommandError(`${key} takes a boolean.`, 2, "usage");
+    }
+    if (key === "auto_patch_enabled" && value === true) {
+      throw new CommandError("auto_patch_enabled cannot be enabled by this tool.", 2, "usage");
+    }
+    patch[key] = value;
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new CommandError(
+      `At least one settings key is required: ${SETTINGS_WRITABLE_KEYS.join(", ")}.`,
+      2,
+      "usage",
+    );
+  }
+  return patch;
+}
+
+export async function settingsSet(
+  args: Record<string, unknown>,
+  cfg?: Config,
+): Promise<ToolPayload> {
+  const patch = settingsPatchFromArgs(args);
+  const settings = await patchSettings(patch, cfg);
+  return {
+    summary: settingsSummary(settings),
+    data: { ...settings },
+  };
+}

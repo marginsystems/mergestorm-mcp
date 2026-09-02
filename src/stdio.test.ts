@@ -10,7 +10,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { MCP_TOOL_NAMES } from "./server.js";
 
-test("stdio initialize lists the read and write tools", { timeout: 15_000 }, async () => {
+test("stdio initialize lists queue_status as read-only with an optional filter", { timeout: 15_000 }, async () => {
   const tsxCli = path.join(
     path.dirname(createRequire(import.meta.url).resolve("tsx/package.json")),
     "dist/cli.mjs",
@@ -33,6 +33,14 @@ test("stdio initialize lists the read and write tools", { timeout: 15_000 }, asy
     assert.deepEqual(
       listed.tools.map((tool) => tool.name).sort(),
       [...MCP_TOOL_NAMES].sort(),
+    );
+    const queueStatus = listed.tools.find((tool) => tool.name === "queue_status");
+    assert.ok(queueStatus);
+    assert.match(queueStatus.description ?? "", /This tool is read-only/);
+    assert.deepEqual(queueStatus.inputSchema.required, undefined);
+    assert.equal(
+      (queueStatus.inputSchema.properties?.stack_id as { type?: string } | undefined)?.type,
+      "string",
     );
   } finally {
     await client.close();

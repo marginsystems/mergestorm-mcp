@@ -194,11 +194,11 @@ describe("review write tools", { concurrency: false }, () => {
     }
   });
 
-  test("review_submit surfaces a governance 400 verbatim", async () => {
+  test("review_submit rejects governance and seam locally (#1461)", async () => {
     const f = await repoWithReviewDiff("mcp-gov-");
     process.env.MERGESTORM_SANDBOX_ROOT = f.root;
     try {
-      mockReviewFetch([
+      const mock = mockReviewFetch([
         { status: 400, body: { error: "invalid_specialists" } },
       ]);
       await assert.rejects(
@@ -213,8 +213,23 @@ describe("review write tools", { concurrency: false }, () => {
             cfg,
           ),
         (err: unknown) =>
-          err instanceof CommandError && /invalid_specialists/.test(err.message),
+          err instanceof CommandError && /governance and seam cannot be requested/.test(err.message),
       );
+      await assert.rejects(
+        () =>
+          reviewSubmit(
+            {
+              cwd: f.repo,
+              base: "main",
+              wait: false,
+              specialists: ["seam"],
+            },
+            cfg,
+          ),
+        (err: unknown) =>
+          err instanceof CommandError && /Unknown specialist: seam/.test(err.message),
+      );
+      assert.equal(mock.calls(), 0);
     } finally {
       await rm(f.root, { recursive: true, force: true });
       delete process.env.MERGESTORM_SANDBOX_ROOT;

@@ -1,7 +1,7 @@
 {
   "name": "mergestorm-mcp",
-  "version": "0.1.0",
-  "description": "Mergestorm MCP server — whoami, credits, and review read tools over stdio",
+  "version": "0.1.2",
+  "description": "Mergestorm MCP server — identity, review, and read-only stack tools over stdio",
   "license": "MIT",
   "type": "module",
   "author": "Margin Systems <hello@mergestorm.ai>",
@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "mergestorm": "^0.3.13",
+    "mergestorm": "^0.3.15",
     "zod": "^3.24.2"
   },
   "devDependencies": {
