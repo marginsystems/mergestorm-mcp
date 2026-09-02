@@ -17,7 +17,7 @@ import type { ToolPayload } from "./tools/types.js";
 import { whoami } from "./tools/whoami.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.1.2";
+export const MCP_SERVER_VERSION = "0.1.3";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
