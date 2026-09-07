@@ -7,13 +7,18 @@ import {
 import {
   payloadFromPrRateLimit,
   payloadFromPrReview,
+  prReviewSummary,
   prReviewTarget,
 } from "./review-get-pr.js";
-import { waitTimeoutMs } from "./review-submit.js";
+import { MCP_PR_WAIT_DEFAULT_S, waitTimeoutMs } from "./review-submit.js";
 import type { ToolPayload } from "./types.js";
 
 export type ReviewWaitPrOptions = {
   pollIntervalMs?: number;
+  /** Exact pass on the head (#2027). */
+  pass?: number;
+  /** Only a pass later than this one on the head; fixed for the whole wait (#2027). */
+  afterPass?: number;
 };
 
 export async function reviewWaitPr(
@@ -34,8 +39,10 @@ export async function reviewWaitPr(
       target.repo,
       target.prNumber,
       {
-        timeoutMs: waitTimeoutMs(timeout_s),
+        timeoutMs: waitTimeoutMs(timeout_s, MCP_PR_WAIT_DEFAULT_S),
         afterSha,
+        pass: opts.pass,
+        afterPass: opts.afterPass,
         intervalMs: opts.pollIntervalMs,
       },
     );
@@ -49,7 +56,12 @@ export async function reviewWaitPr(
     if (err instanceof PrReviewPollTimeoutError) {
       const status = err.lastEnvelope?.status ?? "in_progress";
       return {
-        summary: `${target.owner}/${target.repo}#${target.prNumber} · ${status}`,
+        summary: prReviewSummary(target.owner, target.repo, target.prNumber, {
+          status,
+          head_sha: err.lastEnvelope?.head_sha ?? null,
+          finding_count: err.lastEnvelope?.finding_count ?? null,
+          phase: err.lastEnvelope?.phase ?? null,
+        }),
         data: {
           ...(err.lastEnvelope ?? {}),
           status,

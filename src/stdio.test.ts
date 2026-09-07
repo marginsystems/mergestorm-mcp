@@ -29,10 +29,28 @@ test("stdio initialize lists queue_status as read-only with an optional filter",
   const client = new Client({ name: "mergestorm-mcp-test", version: "0.0.0" });
   try {
     await client.connect(transport, { timeout: 10_000 });
+    assert.match(client.getInstructions() ?? "", /mergestorm-loop: dismiss/);
+    assert.match(client.getInstructions() ?? "", /smallest correct patch/);
     const listed = await client.listTools(undefined, { timeout: 10_000 });
     assert.deepEqual(
       listed.tools.map((tool) => tool.name).sort(),
       [...MCP_TOOL_NAMES].sort(),
+    );
+    const stackAdopt = listed.tools.find((tool) => tool.name === "stack_adopt");
+    assert.ok(stackAdopt);
+    assert.deepEqual(stackAdopt.inputSchema.required, ["owner", "repo", "pr_number"]);
+    assert.deepEqual(
+      Object.keys(stackAdopt.inputSchema.properties ?? {}).sort(),
+      ["auto_land", "auto_patch", "auto_review", "owner", "pr_number", "repo"],
+    );
+    const stackSet = listed.tools.find((tool) => tool.name === "stack_set");
+    assert.ok(stackSet);
+    // Only the id is required: any subset of auto_land / auto_review /
+    // auto_patch is valid, and the handler rejects an empty subset.
+    assert.deepEqual(stackSet.inputSchema.required, ["stack_id"]);
+    assert.deepEqual(
+      Object.keys(stackSet.inputSchema.properties ?? {}).sort(),
+      ["auto_land", "auto_patch", "auto_review", "stack_id"],
     );
     const queueStatus = listed.tools.find((tool) => tool.name === "queue_status");
     assert.ok(queueStatus);

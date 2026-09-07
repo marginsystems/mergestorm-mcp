@@ -34,9 +34,6 @@ export function settingsPatchFromArgs(
     if (typeof value !== "boolean") {
       throw new CommandError(`${key} takes a boolean.`, 2, "usage");
     }
-    if (key === "auto_patch_enabled" && value === true) {
-      throw new CommandError("auto_patch_enabled cannot be enabled by this tool.", 2, "usage");
-    }
     patch[key] = value;
   }
   if (Object.keys(patch).length === 0) {

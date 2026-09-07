@@ -4,7 +4,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, test } from "node:test";
-import { CommandError, REVIEW_JOB_ENVELOPE_SCHEMA } from "mergestorm/client";
+import { CommandError, formatReviewSubmitError, REVIEW_JOB_ENVELOPE_SCHEMA } from "mergestorm/client";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createMergestormMcpServer } from "../server.js";
 import { reviewSubmit } from "./review-submit.js";
 import { reviewWait } from "./review-wait.js";
 
@@ -40,7 +43,7 @@ async function repoWithReviewDiff(prefix: string): Promise<{ root: string; repo:
 }
 
 function mockReviewFetch(
-  responses: { status: number; body: unknown; headers?: Record<string, string> }[],
+  responses: { status: number; body: unknown; raw?: boolean; headers?: Record<string, string> }[],
 ): { calls: () => number; posts: () => unknown[] } {
   originalFetch = globalThis.fetch;
   let n = 0;
@@ -51,7 +54,7 @@ function mockReviewFetch(
     }
     const r = responses[Math.min(n, responses.length - 1)]!;
     n += 1;
-    return new Response(JSON.stringify(r.body), {
+    return new Response(r.raw ? String(r.body) : JSON.stringify(r.body), {
       status: r.status,
       headers: { "Content-Type": "application/json", ...r.headers },
     });
@@ -60,7 +63,7 @@ function mockReviewFetch(
 }
 
 describe("review write tools", { concurrency: false }, () => {
-  test("review_submit without wait posts the same payload as collectReviewInput", async () => {
+  test("review_submit with omitted wait returns queued and job_id without polling", async () => {
     const f = await repoWithReviewDiff("mcp-submit-");
     process.env.MERGESTORM_SANDBOX_ROOT = f.root;
     try {
@@ -68,7 +71,7 @@ describe("review write tools", { concurrency: false }, () => {
         { status: 202, body: { job_id: "job_s", status: "queued", thread_slug: "local/main" } },
       ]);
       const result = await reviewSubmit(
-        { cwd: f.repo, base: "main", wait: false, context: "focus on auth" },
+        { cwd: f.repo, base: "main", context: "focus on auth" },
         cfg,
       );
       assert.equal(result.data.schema, REVIEW_JOB_ENVELOPE_SCHEMA);
@@ -89,6 +92,104 @@ describe("review write tools", { concurrency: false }, () => {
       assert.equal(posted.files[0]?.path, "README.md");
       assert.equal(posted.context, "focus on auth");
       assert.match(posted.thread, /^local\//);
+    } finally {
+      await rm(f.root, { recursive: true, force: true });
+      delete process.env.MERGESTORM_SANDBOX_ROOT;
+    }
+  });
+
+  for (const response of [
+    { status: 413, body: "<html><body>413 Request Entity Too Large</body></html>", raw: true,
+      headers: { "Content-Type": "text/html" } },
+    { status: 413, body: { message: "Review payload too large" } },
+  ]) {
+    test(`review_submit handler preserves structured failure for ${response.raw ? "HTML" : "JSON"} 413`, async () => {
+      const previousKey = process.env.MERGESTORM_API_KEY;
+      process.env.MERGESTORM_API_KEY = cfg.apiKey;
+      const server = createMergestormMcpServer();
+      const client = new Client({ name: "review-submit-test", version: "1.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      try {
+        const mock = mockReviewFetch([response]);
+        await server.connect(serverTransport);
+        await client.connect(clientTransport);
+        const result = await client.callTool({
+          name: "review_submit",
+          arguments: { diff: "diff --git a/a b/a\n+changed\n", base: "main" },
+        });
+        assert.equal(result.isError, true);
+        const data = (result.structuredContent ?? {}) as Record<string, unknown>;
+        assert.equal(data.schema, REVIEW_JOB_ENVELOPE_SCHEMA);
+        assert.equal(data.status, "failed");
+        const error = String(data.error);
+        assert.equal(error, formatReviewSubmitError(413, response.raw ? {} : response.body));
+        assert.notEqual(error, "{}");
+        assert.match(error, /no credits were charged/i);
+        assert.match(error, /before a review job was created|No review job was created/);
+        if (response.raw) assert.match(error, /HTTP 413/);
+        else assert.match(error, /Review payload too large/);
+        assert.equal(mock.calls(), 1);
+      } finally {
+        await client.close();
+        await server.close();
+        if (previousKey === undefined) delete process.env.MERGESTORM_API_KEY;
+        else process.env.MERGESTORM_API_KEY = previousKey;
+      }
+    });
+  }
+
+  for (const explicitDiff of [false, true]) {
+    test(`review_submit discovers origin/HEAD develop for ${explicitDiff ? "explicit" : "collected"} diff`, async () => {
+      const f = await repoWithReviewDiff("mcp-develop-");
+      process.env.MERGESTORM_SANDBOX_ROOT = f.root;
+      try {
+        execFileSync("git", ["branch", "-m", "main", "develop"], { cwd: f.repo });
+        execFileSync("git", ["update-ref", "refs/remotes/origin/develop", "develop"], { cwd: f.repo });
+        execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop"], { cwd: f.repo });
+        const mock = mockReviewFetch([{ status: 202, body: { job_id: "job_dev", status: "queued" } }]);
+        const result = await reviewSubmit({
+          cwd: f.repo,
+          ...(explicitDiff ? { diff: "diff --git a/a b/a\n+changed\n" } : {}),
+        }, cfg);
+        assert.equal(result.data.job_id, "job_dev");
+        const posted = mock.posts()[0] as { base_label: string; diff: string };
+        assert.equal(posted.base_label, "develop");
+        assert.match(posted.diff, /changed/);
+        assert.equal(mock.calls(), 1);
+      } finally {
+        await rm(f.root, { recursive: true, force: true });
+        delete process.env.MERGESTORM_SANDBOX_ROOT;
+      }
+    });
+  }
+
+  test("review_submit accepts an explicit diff from a non-git cwd", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "mcp-diff-cwd-"));
+    try {
+      const mock = mockReviewFetch([
+        { status: 202, body: { job_id: "job_diff", status: "queued" } },
+      ]);
+      const result = await reviewSubmit({ cwd, diff: "diff --git a/a b/a\n+changed\n" }, cfg);
+      assert.equal(result.data.job_id, "job_diff");
+      const posted = mock.posts()[0] as { base_label: string; diff: string };
+      assert.equal(posted.base_label, "main");
+      assert.match(posted.diff, /changed/);
+      assert.equal(mock.calls(), 1);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("review_submit keeps main no_changes when master has a diff", async () => {
+    const f = await repoWithReviewDiff("mcp-main-clean-");
+    process.env.MERGESTORM_SANDBOX_ROOT = f.root;
+    try {
+      execFileSync("git", ["branch", "master", "main"], { cwd: f.repo });
+      execFileSync("git", ["branch", "-f", "main", "HEAD"], { cwd: f.repo });
+      const mock = mockReviewFetch([{ status: 202, body: { job_id: "unexpected" } }]);
+      const result = await reviewSubmit({ cwd: f.repo }, cfg);
+      assert.equal(result.data.status, "no_changes");
+      assert.equal(mock.calls(), 0);
     } finally {
       await rm(f.root, { recursive: true, force: true });
       delete process.env.MERGESTORM_SANDBOX_ROOT;

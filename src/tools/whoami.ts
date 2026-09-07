@@ -3,7 +3,6 @@ import {
   apiBase,
   configPath,
   getMe,
-  keyDisplay,
   loadConfig,
   resolveApiKey,
   type Config,
@@ -21,14 +20,17 @@ export async function whoami(cfg?: Config): Promise<ToolPayload> {
     );
   }
   const me = await getMe(resolved);
+  if (!me) {
+    throw new CommandError("Live account details unavailable. Could not verify account with /me.");
+  }
   const data = {
-    key_prefix: me?.key.prefix ?? keyDisplay(key),
-    key_name: me?.key.name ?? null,
-    plan_key: me?.plan_key ?? null,
-    plan_label_key: me?.plan_label_key ?? null,
+    key_prefix: me.key.prefix,
+    key_name: me.key.name ?? null,
+    plan_key: me.plan_key ?? null,
+    plan_label_key: me.plan_label_key ?? null,
     api_base: apiBase(resolved),
     config_path: configPath(),
-    usage: me?.usage ?? null,
+    usage: me.usage ?? null,
   };
   const plan = data.plan_label_key ?? data.plan_key ?? "unknown plan";
   return {

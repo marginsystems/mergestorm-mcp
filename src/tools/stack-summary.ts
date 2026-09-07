@@ -10,5 +10,17 @@ export function stackSummary(stack: StackDto): string {
       : stack.unit
         ? `unit: ${stack.unit.state}`
         : "no open layers";
-  return `${stack.owner}/${stack.repo} · ${layerLabel} · ${currentState}`;
+  const overrides: string[] = [];
+  if (typeof stack.autoReviewOverride === "boolean") {
+    overrides.push(`auto-review ${stack.autoReviewOverride ? "on" : "off"}`);
+  }
+  if (typeof stack.autoPatchOverride === "boolean") {
+    overrides.push(`auto-patch ${stack.autoPatchOverride ? "on" : "off"}`);
+  }
+  if (stack.cycloneOwnerMatch) {
+    overrides.push(`cyclone-owner ${stack.cycloneOwnerMatch}`);
+  }
+  return `${stack.owner}/${stack.repo} · ${layerLabel} · ${currentState} · auto-land ${
+    stack.autoEnqueueWhenReady ? "on" : "off"
+  }${overrides.map((label) => ` · ${label}`).join("")}`;
 }

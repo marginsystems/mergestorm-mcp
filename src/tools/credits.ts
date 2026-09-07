@@ -18,11 +18,16 @@ export async function credits(cfg?: Config): Promise<ToolPayload> {
   const remaining =
     standard.remaining ??
     (standard.limit != null ? Math.max(0, standard.limit - standard.used) : null);
+  const bonusRemaining = (
+    me.usage as typeof me.usage & { bonus?: { remaining: number } }
+  ).bonus?.remaining;
+  const bonusSummary =
+    bonusRemaining == null ? "" : ` · ${bonusRemaining} bonus remaining`;
   return {
     summary:
       remaining == null
-        ? `${standard.used} used · unlimited`
-        : `${standard.used} used · ${remaining} remaining`,
+        ? `${standard.used} used · unlimited${bonusSummary}`
+        : `${standard.used} used · ${remaining} remaining${bonusSummary}`,
     data: {
       usage: me.usage,
       resets_at: me.resets_at ?? null,

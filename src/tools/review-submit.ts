@@ -6,6 +6,8 @@ import {
   REVIEW_THREAD_SLUG_RE,
   ReviewPollTimeoutError,
   collectReviewInput,
+  discoverTrunk,
+  formatReviewSubmitError,
   loadConfig,
   loadReviewContext,
   pollReview,
@@ -18,8 +20,15 @@ import {
 import { payloadFromRateLimit, payloadFromRow } from "./envelope.js";
 import type { ToolPayload } from "./types.js";
 
-/** Hosts should not hang; cap each submit/wait call at five minutes. */
+/** Hard maximum for an explicitly requested MCP poll slice. */
 export const MCP_WAIT_CEILING_S = 300;
+
+/**
+ * Default bound for local and PR review waits. Reviews can take minutes or hours;
+ * Cursor kills a single MCP call around a minute, so this is one poll
+ * slice. The skill loops until the review finishes.
+ */
+export const MCP_PR_WAIT_DEFAULT_S = 45;
 
 /** Pinnable L0 lanes. `governance` and `seam` are L1 and cannot be requested. */
 const PINNABLE_SPECIALISTS = [
@@ -73,8 +82,11 @@ export type ReviewSubmitOptions = {
   pollIntervalMs?: number;
 };
 
-export function waitTimeoutMs(timeout_s?: number): number {
-  const seconds = timeout_s ?? MCP_WAIT_CEILING_S;
+export function waitTimeoutMs(
+  timeout_s?: number,
+  defaultSeconds: number = MCP_PR_WAIT_DEFAULT_S,
+): number {
+  const seconds = timeout_s ?? defaultSeconds;
   if (!Number.isFinite(seconds) || seconds <= 0) {
     throw new CommandError("timeout_s must be a positive number of seconds", 2, "usage");
   }
@@ -92,16 +104,21 @@ async function resolveInput(input: ReviewSubmitInput): Promise<ReviewInput | nul
     return {
       thread,
       branch,
-      baseLabel: input.base?.trim() || "main",
+      baseLabel:
+        input.base?.trim() ||
+        (() => {
+          try {
+            return discoverTrunk(cwd);
+          } catch {
+            return "main";
+          }
+        })(),
       headLabel: head,
       diff: input.diff,
       files: [],
     };
   }
 
-  const bases = input.base?.trim()
-    ? [input.base.trim()]
-    : ["main", "master"];
   const sandboxRoot = mcpSandboxRoot();
   try {
     const [sandboxReal, cwdReal] = await Promise.all([
@@ -116,26 +133,8 @@ async function resolveInput(input: ReviewSubmitInput): Promise<ReviewInput | nul
     if (err instanceof CommandError) throw err;
     throw new CommandError("cwd must be inside the configured sandbox root", 2, "usage");
   }
-  let lastErr: unknown;
-  let collected: ReviewInput | null = null;
-  let yielded = false;
-  for (const base of bases) {
-    try {
-      const candidate = await collectReviewInput(base, head, cwd, sandboxRoot);
-      yielded = true;
-      if (!collected) collected = candidate;
-    } catch (err) {
-      // Once a base yielded a result (even null = no_changes), a later
-      // fallback base that doesn't exist (e.g. no `master` ref) must not
-      // mask it with an error.
-      if (yielded) continue;
-      lastErr = err;
-      if (input.base?.trim()) throw err;
-    }
-  }
-  if (yielded) return collected;
-  if (lastErr) throw lastErr;
-  return null;
+  const base = input.base?.trim() || discoverTrunk(cwd);
+  return collectReviewInput(base, head, cwd, sandboxRoot);
 }
 
 export async function reviewSubmit(
@@ -144,7 +143,7 @@ export async function reviewSubmit(
   opts: ReviewSubmitOptions = {},
 ): Promise<ToolPayload> {
   const resolved = cfg ?? (await loadConfig());
-  const wait = input.wait !== false;
+  const wait = input.wait === true;
   const timeoutMs = waitTimeoutMs(input.timeout_s);
   assertPinnableSpecialists(input.specialists);
 
@@ -197,7 +196,13 @@ export async function reviewSubmit(
     });
   }
   if (submitted.status !== 202 && submitted.status !== 200) {
-    throw new CommandError(JSON.stringify(submitted.row));
+    return {
+      ...payloadFromRow({ ...submitted.row, status: "failed" }, {
+        jobId,
+        error: formatReviewSubmitError(submitted.status, submitted.row),
+      }),
+      isError: true,
+    };
   }
   if (!jobId) {
     throw new CommandError("Review API returned no job_id");

@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { CommandError, REVIEW_JOB_ENVELOPE_SCHEMA } from "mergestorm/client";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createMergestormMcpServer } from "../server.js";
 import { credits } from "./credits.js";
 import { queueStatus } from "./queue-status.js";
 import { reviewGet } from "./review-get.js";
 import { reviewList } from "./review-list.js";
 import { settingsGet } from "./settings-get.js";
 import { settingsSet } from "./settings-set.js";
+import { stackAdopt, type StackAdoptInput } from "./stack-adopt.js";
 import { stackList } from "./stack-list.js";
+import { stackSet } from "./stack-set.js";
 import { stackStatus } from "./stack-status.js";
 import { whoami } from "./whoami.js";
 
@@ -26,7 +31,10 @@ const meBody = {
   plan_key: "starter",
   plan_label_key: "Starter",
   resets_at: "2026-09-01T00:00:00.000Z",
-  usage: { standard: { used: 3, limit: 40, remaining: 37 } },
+  usage: {
+    standard: { used: 3, limit: 40, remaining: 37 },
+    bonus: { remaining: 9 },
+  },
 };
 
 let originalFetch: typeof globalThis.fetch | undefined;
@@ -74,10 +82,10 @@ test("whoami throws when no API key is configured", async () => {
   );
 });
 
-test("credits returns usage.standard and resets_at", async () => {
+test("credits returns monthly and bonus usage with resets_at", async () => {
   mockFetch(200, meBody);
   const result = await credits(cfg);
-  assert.equal(result.summary, "3 used · 37 remaining");
+  assert.equal(result.summary, "3 used · 37 remaining · 9 bonus remaining");
   assert.deepEqual(result.data.usage, meBody.usage);
   assert.equal(result.data.resets_at, meBody.resets_at);
 });
@@ -155,10 +163,39 @@ test("stack_list returns owned stack DTOs with factual state summaries", async (
   const result = await stackList(cfg);
   assert.equal(
     result.summary,
-    "acme/widgets · 2 layers · layers: clean, needs_restack",
+    "acme/widgets · 2 layers · layers: clean, needs_restack · auto-land off",
   );
   const stacks = result.data.stacks as Array<{ id: string }>;
   assert.equal(stacks[0]?.id, "stack-1");
+});
+
+test("stack_status summary includes cycloneOwnerMatch when present", async () => {
+  mockFetch(200, {
+    stacks: [
+      {
+        id: "stack-9",
+        owner: "acme",
+        repo: "widgets",
+        layers: [{ state: "clean" }],
+        cycloneOwnerMatch: "different",
+        keyUserId: "key-user",
+        cycloneInstallUserId: "install-user",
+      },
+    ],
+  });
+  const result = await stackStatus("stack-9", cfg);
+  assert.equal(
+    result.summary,
+    "acme/widgets · 1 layer · layers: clean · auto-land off · cyclone-owner different",
+  );
+  const stack = result.data.stack as {
+    cycloneOwnerMatch: string;
+    keyUserId: string;
+    cycloneInstallUserId: string;
+  };
+  assert.equal(stack.cycloneOwnerMatch, "different");
+  assert.equal(stack.keyUserId, "key-user");
+  assert.equal(stack.cycloneInstallUserId, "install-user");
 });
 
 test("stack_status returns one enriched owned stack", async () => {
@@ -173,11 +210,65 @@ test("stack_status returns one enriched owned stack", async () => {
     ],
   });
   const result = await stackStatus("stack-9", cfg);
-  assert.equal(result.summary, "acme/widgets · 1 layer · layers: clean");
+  assert.equal(
+    result.summary,
+    "acme/widgets · 1 layer · layers: clean · auto-land off",
+  );
   assert.equal(result.isError, undefined);
   const stack = result.data.stack as { id: string; layers: Array<{ checks: unknown }> };
   assert.equal(stack.id, "stack-9");
   assert.deepEqual(stack.layers[0]?.checks, { total: 2, success: 2 });
+});
+
+test("stack_set PATCHes Auto land on the owned stack", async () => {
+  originalFetch ??= globalThis.fetch;
+  let requestUrl = "";
+  let requestMethod = "";
+  let requestBody: unknown;
+  globalThis.fetch = async (input, init) => {
+    requestUrl = String(input);
+    requestMethod = init?.method ?? "GET";
+    requestBody = JSON.parse(String(init?.body));
+    return Response.json({ autoEnqueueWhenReady: true });
+  };
+  const result = await stackSet("stack-9", { auto_land: true }, cfg);
+  assert.equal(requestUrl, "https://api.example.test/api/v1/stacks/stack-9");
+  assert.equal(requestMethod, "PATCH");
+  assert.deepEqual(requestBody, { autoEnqueueWhenReady: true });
+  assert.equal(result.summary, "Auto land on for stack stack-9");
+});
+
+test("stack_set PATCHes the per-stack review / patch overrides, null clearing one", async () => {
+  originalFetch ??= globalThis.fetch;
+  let requestBody: unknown;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return Response.json({ autoReviewOverride: null, autoPatchOverride: false });
+  };
+  const result = await stackSet(
+    "stack-9",
+    { auto_review: null, auto_patch: false },
+    cfg,
+  );
+  assert.deepEqual(requestBody, { autoReviewOverride: null, autoPatchOverride: false });
+  assert.equal(result.isError, undefined);
+  assert.equal(result.summary, "auto-review default, auto-patch off for stack stack-9");
+  assert.deepEqual(result.data.auto_review, null);
+  assert.deepEqual(result.data.auto_patch, false);
+  assert.equal("auto_land" in result.data, false);
+});
+
+test("stack_set with no policy key is a structured error and never calls the API", async () => {
+  originalFetch ??= globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({});
+  };
+  const result = await stackSet("stack-9", {}, cfg);
+  assert.equal(result.isError, true);
+  assert.equal(calls, 0);
+  assert.equal((result.data.error as { code: string }).code, "invalid_input");
 });
 
 test("stack_status returns a structured not-found error", async () => {
@@ -266,6 +357,7 @@ const settingsBody = {
   review_unit_land_prs_enabled: false,
   cyclone_review_unit_land_prs_enabled: false,
   vortex_seam_specialist_enabled: true,
+  auto_land_default: false,
   cyclone_connected: true,
   github_connected: true,
 };
@@ -347,14 +439,34 @@ test("settings_set rejects non-boolean values as usage errors", async () => {
   );
 });
 
-test("settings_set rejects enabling auto-patch", async () => {
-  await assert.rejects(
-    () => settingsSet({ auto_patch_enabled: true }, cfg),
-    (err: unknown) =>
-      err instanceof CommandError &&
-      err.code === "usage" &&
-      err.message === "auto_patch_enabled cannot be enabled by this tool.",
-  );
+test("settings_set PATCHes auto_patch_enabled true", async () => {
+  originalFetch ??= globalThis.fetch;
+  let requestBody: unknown;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return Response.json({ ...settingsBody, auto_patch_enabled: true });
+  };
+
+  const result = await settingsSet({ auto_patch_enabled: true }, cfg);
+  assert.deepEqual(requestBody, { auto_patch_enabled: true });
+  assert.equal(result.summary, "auto_patch on · Cyclone connected");
+  assert.equal(result.data.auto_patch_enabled, true);
+});
+
+test("settings_set PATCHes auto_land_default true", async () => {
+  originalFetch ??= globalThis.fetch;
+  let method = "";
+  let requestBody: unknown;
+  globalThis.fetch = async (_input, init) => {
+    method = init?.method ?? "GET";
+    requestBody = JSON.parse(String(init?.body));
+    return Response.json({ ...settingsBody, auto_land_default: true });
+  };
+
+  const result = await settingsSet({ auto_land_default: true }, cfg);
+  assert.equal(method, "PATCH");
+  assert.deepEqual(requestBody, { auto_land_default: true });
+  assert.equal(result.data.auto_land_default, true);
 });
 
 test("stack read handlers surface API errors", async () => {
@@ -418,4 +530,141 @@ test("stack read handlers return structured rate_limited payloads", async () => 
   const queueError = queue.data.error as { code?: string; retry_after_seconds?: number };
   assert.equal(queueError.code, "rate_limited");
   assert.equal(queueError.retry_after_seconds, 4);
+});
+
+for (const failure of ["404", "network", "timeout", "401"] as const) {
+  test(`whoami rejects ${failure} instead of returning cached account metadata`, async () => {
+    if (failure === "404" || failure === "401") {
+      mockFetch(Number(failure), { error: "unavailable" });
+    } else {
+      originalFetch = globalThis.fetch;
+      globalThis.fetch = async () => {
+        if (failure === "timeout") {
+          throw Object.assign(new Error("timeout"), { name: "TimeoutError" });
+        }
+        throw new TypeError("fetch failed");
+      };
+    }
+    await assert.rejects(() => whoami(cfg), (err: unknown) => {
+      assert.ok(err instanceof CommandError);
+      assert.notEqual(err.exitCode, 0);
+      if (failure === "401") assert.equal(err.code, "auth_invalid");
+      else assert.match(err.message, /Live account details unavailable/);
+      return true;
+    });
+  });
+}
+
+test("MCP whoami returns an error payload when live account details are unavailable", async () => {
+  originalApiKey = process.env.MERGESTORM_API_KEY;
+  process.env.MERGESTORM_API_KEY = cfg.apiKey;
+  mockFetch(404, { error: "not_found" });
+  const server = createMergestormMcpServer();
+  const client = new Client({ name: "whoami-test", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await client.callTool({ name: "whoami", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent, undefined);
+    assert.match(JSON.stringify(result.content), /Live account details unavailable/);
+    assert.doesNotMatch(JSON.stringify(result), /key_prefix|usage/);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+const adoptPolicies: Array<
+  Partial<Pick<StackAdoptInput, "auto_land" | "auto_review" | "auto_patch">>
+> = [
+  {},
+  { auto_land: false, auto_review: null, auto_patch: false },
+  { auto_land: false, auto_review: true, auto_patch: null },
+  { auto_review: false, auto_patch: null },
+];
+for (const policy of adoptPolicies) {
+  test(`stack_adopt POSTs Bearer adoption with policy ${JSON.stringify(policy)}`, async () => {
+    originalFetch ??= globalThis.fetch;
+    let calls = 0;
+    const body = { stack: { id: "stack-9" }, chain: [] };
+    globalThis.fetch = async (input, init) => {
+      calls += 1;
+      assert.equal(String(input), "https://api.example.test/api/v1/stacks/adopt");
+      assert.equal(init?.method, "POST");
+      assert.equal(new Headers(init?.headers).get("Authorization"), `Bearer ${cfg.apiKey}`);
+      assert.deepEqual(JSON.parse(String(init?.body)), {
+        owner: "acme", repo: "widgets", prNumber: 42,
+        ...("auto_land" in policy ? { autoEnqueueWhenReady: policy.auto_land } : {}),
+        ...("auto_review" in policy ? { autoReviewOverride: policy.auto_review } : {}),
+        ...("auto_patch" in policy ? { autoPatchOverride: policy.auto_patch } : {}),
+      });
+      return Response.json(body);
+    };
+    const result = await stackAdopt({ owner: " acme ", repo: "widgets", pr_number: 42, ...policy }, cfg);
+    assert.equal(calls, 1);
+    assert.equal(result.isError, undefined);
+    assert.equal(result.summary, "Adopted stack for acme/widgets#42");
+    assert.deepEqual(result.data.result, body);
+  });
+}
+
+test("stack_adopt rejects invalid input without calling the API", async () => {
+  originalFetch ??= globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return Response.json({}); };
+  for (const invalid of [
+    { repo: "widgets", pr_number: 42 },
+    { owner: "acme", pr_number: 42 },
+    { owner: "acme", repo: "widgets" },
+    ...[{ owner: " " }, { repo: "" }, { pr_number: 0 }, { pr_number: 1.5 },
+      { auto_land: null }, { auto_land: true }, { auto_patch: "off" }, { auto_patch: true }].map((override) => ({
+        owner: "acme", repo: "widgets", pr_number: 42, ...override,
+      })),
+  ]) {
+    const result = await stackAdopt(invalid as StackAdoptInput, cfg);
+    assert.equal(result.isError, true);
+    assert.equal((result.data.error as { code: string }).code, "invalid_input");
+  }
+  assert.equal(calls, 0);
+});
+
+test("stack_adopt returns a structured API failure", async () => {
+  mockFetch(503, { error: "busy" });
+  const result = await stackAdopt({ owner: "acme", repo: "widgets", pr_number: 42 }, cfg);
+  assert.equal(result.isError, true);
+  assert.match(result.summary, /Failed to import stack.*503/);
+  assert.equal((result.data.error as { code: string }).code, "stack_adopt_failed");
+});
+
+test("stack_adopt returns rate-limit details from the API", async () => {
+  mockFetch(429, { error: "rate_limited", retry_after_seconds: 9 }, { "Retry-After": "9" });
+  const result = await stackAdopt({ owner: "acme", repo: "widgets", pr_number: 42 }, cfg);
+  const error = result.data.error as { code: string; retry_after_seconds?: number };
+  assert.equal(error.code, "rate_limited");
+  assert.equal(error.retry_after_seconds, 9);
+});
+
+test("MCP stack_adopt rejects missing target fields before calling the API", async () => {
+  originalFetch ??= globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return Response.json({}); };
+  const server = createMergestormMcpServer();
+  const client = new Client({ name: "adopt-test", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    for (const key of ["owner", "repo", "pr_number"]) {
+      const args: Record<string, unknown> = { owner: "acme", repo: "widgets", pr_number: 42 };
+      delete args[key];
+      const result = await client.callTool({ name: "stack_adopt", arguments: args });
+      assert.equal(result.isError, true);
+    }
+    assert.equal(calls, 0);
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });

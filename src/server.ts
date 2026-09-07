@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { CommandError } from "mergestorm/client";
+import { CommandError, SETTINGS_WRITABLE_KEYS } from "mergestorm/client";
 import { credits } from "./tools/credits.js";
 import { queueStatus } from "./tools/queue-status.js";
 import { reviewGetPr } from "./tools/review-get-pr.js";
@@ -11,13 +11,16 @@ import { reviewWaitPr } from "./tools/review-wait-pr.js";
 import { reviewWait } from "./tools/review-wait.js";
 import { settingsGet } from "./tools/settings-get.js";
 import { settingsSet } from "./tools/settings-set.js";
+import { stackAdopt, stackAdoptSchema } from "./tools/stack-adopt.js";
 import { stackList } from "./tools/stack-list.js";
+import { stackSet } from "./tools/stack-set.js";
 import { stackStatus } from "./tools/stack-status.js";
 import type { ToolPayload } from "./tools/types.js";
 import { whoami } from "./tools/whoami.js";
+import { MCP_PR_LOOP_INSTRUCTIONS } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.1.3";
+export const MCP_SERVER_VERSION = "0.1.5";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -28,7 +31,9 @@ export const MCP_TOOL_NAMES = [
   "review_submit",
   "review_wait",
   "review_wait_pr",
+  "stack_adopt",
   "stack_list",
+  "stack_set",
   "stack_status",
   "queue_status",
   "settings_get",
@@ -73,10 +78,13 @@ function fail(err: unknown) {
 }
 
 export function createMergestormMcpServer(): McpServer {
-  const server = new McpServer({
-    name: MCP_SERVER_NAME,
-    version: MCP_SERVER_VERSION,
-  });
+  const server = new McpServer(
+    {
+      name: MCP_SERVER_NAME,
+      version: MCP_SERVER_VERSION,
+    },
+    { instructions: MCP_PR_LOOP_INSTRUCTIONS },
+  );
   // MCP SDK + zod generic inference hits TS2589 on several schemas; keep
   // runtime registerTool, drop the instantiation from our typecheck.
   const addTool = server.registerTool.bind(server) as (
@@ -157,16 +165,25 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Get GitHub PR Vortex review",
       description:
-        "Fetch the latest GitHub PR Vortex pass from the DB-only endpoint. This tool is read-only. On rate_limited, wait retry_after_seconds before trying again.",
+        "Fetch the latest GitHub PR Vortex pass from the DB-only endpoint. Review identity is SHA + pass: the envelope carries pass (1 for the first review on a head; a re-review on the same head is the next pass). Pass after_sha to scope to a head, pass to read one exact attempt, or after_pass to read only a later attempt on that head. This tool is read-only. On rate_limited, wait retry_after_seconds before trying again. Verify each finding against the current code; prefer the smallest correct patch; a chat-only skip is not a dismiss (post a PR comment starting with mergestorm-loop: dismiss).",
       inputSchema: {
         owner: z.string().min(1),
         repo: z.string().min(1),
         pr_number: z.number().int().min(1),
+        after_sha: z.string().optional(),
+        pass: z.number().int().min(1).optional(),
+        after_pass: z.number().int().min(1).optional(),
       },
     },
-    async ({ owner, repo, pr_number }) => {
+    async ({ owner, repo, pr_number, after_sha, pass, after_pass }) => {
       try {
-        return ok(await reviewGetPr(owner, repo, pr_number));
+        return ok(
+          await reviewGetPr(owner, repo, pr_number, undefined, {
+            afterSha: after_sha,
+            pass,
+            afterPass: after_pass,
+          }),
+        );
       } catch (err) {
         return fail(err);
       }
@@ -178,7 +195,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Submit review",
       description:
-        "Submit a local git diff (or an explicit diff) as a Mergestorm review job. Default waits up to 300s. On rate_limited, wait retry_after_seconds and inspect or wait for an in-flight review before resubmitting. specialists may be security, performance, architecture, tests, data, api, frontend. governance and seam cannot be requested.",
+        "Submit a local git diff (or an explicit diff) as a Mergestorm review job. Does not wait by default; returns job_id immediately after submission. Explicit wait: true polls one 45s slice by default. Record job_id and loop review_wait until done. Do not pass 300; hosts drop long MCP calls. On rate_limited, wait retry_after_seconds and inspect or wait for an in-flight review before resubmitting. specialists may be security, performance, architecture, tests, data, api, frontend. governance and seam cannot be requested.",
       inputSchema: {
         cwd: z.string().optional(),
         base: z.string().optional(),
@@ -208,7 +225,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Wait for review",
       description:
-        "Poll one Mergestorm review job until it finishes, return in_progress after 300s, or return rate_limited with retry_after_seconds.",
+        "Poll one Mergestorm review job for one 45s slice by default (max 300s). On timeout, returns in_progress; call again with the same job_id until done. Do not pass 300; hosts drop long MCP calls. On rate_limited, wait retry_after_seconds before trying again.",
       inputSchema: {
         job_id: z.string().min(1),
         timeout_s: z.number().positive().max(300).optional(),
@@ -228,16 +245,18 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Wait for GitHub PR Vortex review",
       description:
-        "Poll the DB-only GitHub PR Vortex pass until it rests. This tool is read-only. On timeout, returns in_progress. On rate_limited, wait retry_after_seconds before trying again.",
+        "Poll the DB-only GitHub PR Vortex pass for up to 45s (pass timeout_s to override, max 300). Review identity is SHA + pass. Pass after_sha for the head you pushed. When you already hold an envelope for that same head, also pass after_pass set to its pass so the wait cannot return that attempt again; keep after_pass unchanged across timeout retries and never replace it with the pass of an in-progress envelope. Omit after_pass for a head you have no envelope for (its first pass is 1). This tool is read-only. On timeout, returns in_progress so you can call again. Do not pass 300; hosts drop long MCP calls. On rate_limited, wait retry_after_seconds before trying again. After a resting pass, verify each finding; prefer the smallest correct patch; if you skip, post a PR comment starting with mergestorm-loop: dismiss.",
       inputSchema: {
         owner: z.string().min(1),
         repo: z.string().min(1),
         pr_number: z.number().int().min(1),
         after_sha: z.string().optional(),
+        pass: z.number().int().min(1).optional(),
+        after_pass: z.number().int().min(1).optional(),
         timeout_s: z.number().positive().max(300).optional(),
       },
     },
-    async ({ owner, repo, pr_number, after_sha, timeout_s }) => {
+    async ({ owner, repo, pr_number, after_sha, pass, after_pass, timeout_s }) => {
       try {
         return ok(
           await reviewWaitPr(
@@ -246,8 +265,27 @@ export function createMergestormMcpServer(): McpServer {
             pr_number,
             after_sha,
             timeout_s,
+            undefined,
+            { pass, afterPass: after_pass },
           ),
         );
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  addTool(
+    "stack_adopt",
+    {
+      title: "Adopt PR stack",
+      description:
+        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land may only be false; auto_review and auto_patch set per-stack policy, and null clears their overrides. Omitted policy keys follow the account settings. Never changes account settings. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership.",
+      inputSchema: stackAdoptSchema,
+    },
+    async (args) => {
+      try {
+        return ok(await stackAdopt(args));
       } catch (err) {
         return fail(err);
       }
@@ -264,6 +302,34 @@ export function createMergestormMcpServer(): McpServer {
     async () => {
       try {
         return ok(await stackList());
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  addTool(
+    "stack_set",
+    {
+      title: "Set stack policy",
+      description:
+        "Set per-stack automation on one owned Mergestorm stack: auto_land arms or disarms Auto land; auto_review and auto_patch pin Vortex auto-review or Cyclone auto-patch for this stack only (true or false), and null clears the pin so the stack follows the account setting again. Pass at least one key. Never changes account settings.",
+      inputSchema: {
+        stack_id: z.string().min(1),
+        auto_land: z.boolean().optional(),
+        auto_review: z.boolean().nullable().optional(),
+        auto_patch: z.boolean().nullable().optional(),
+      },
+    },
+    async ({ stack_id, auto_land, auto_review, auto_patch }) => {
+      try {
+        return ok(
+          await stackSet(stack_id, {
+            ...(auto_land !== undefined ? { auto_land } : {}),
+            ...(auto_review !== undefined ? { auto_review } : {}),
+            ...(auto_patch !== undefined ? { auto_patch } : {}),
+          }),
+        );
       } catch (err) {
         return fail(err);
       }
@@ -330,15 +396,9 @@ export function createMergestormMcpServer(): McpServer {
       title: "Update settings",
       description:
         "Update writable Bearer /api/v1/settings toggles and return the stored result. At least one key is required. cyclone_connected and github_connected are read-only and cannot be set.",
-      inputSchema: {
-        auto_review_enabled: z.boolean().optional(),
-        auto_patch_enabled: z.boolean().optional(),
-        vortex_show_thinking_traces: z.boolean().optional(),
-        repo_overview_enabled: z.boolean().optional(),
-        review_unit_land_prs_enabled: z.boolean().optional(),
-        cyclone_review_unit_land_prs_enabled: z.boolean().optional(),
-        vortex_seam_specialist_enabled: z.boolean().optional(),
-      },
+      inputSchema: Object.fromEntries(
+        SETTINGS_WRITABLE_KEYS.map((key) => [key, z.boolean().optional()]),
+      ),
     },
     async (args) => {
       try {

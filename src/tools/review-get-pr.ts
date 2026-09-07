@@ -20,6 +20,29 @@ export function prReviewTarget(owner: string, repo: string, prNumber: number) {
   return { owner: cleanOwner, repo: cleanRepo, prNumber };
 }
 
+export function prReviewSummary(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  envelope: {
+    status: string;
+    head_sha?: string | null;
+    finding_count?: number | null;
+    phase?: string | null;
+  },
+): string {
+  const bits = [`${owner}/${repo}#${prNumber}`, envelope.status];
+  const sha = envelope.head_sha?.trim();
+  if (sha) bits.push(`sha ${sha.slice(0, 7)}`);
+  if (typeof envelope.finding_count === "number") {
+    bits.push(
+      `${envelope.finding_count} finding${envelope.finding_count === 1 ? "" : "s"}`,
+    );
+  }
+  if (envelope.phase) bits.push(String(envelope.phase));
+  return bits.join(" · ");
+}
+
 export function payloadFromPrReview(
   owner: string,
   repo: string,
@@ -27,7 +50,7 @@ export function payloadFromPrReview(
   envelope: PrVortexReview,
 ): ToolPayload {
   return {
-    summary: `${owner}/${repo}#${prNumber} · ${envelope.status}`,
+    summary: prReviewSummary(owner, repo, prNumber, envelope),
     data: { ...envelope },
   };
 }
@@ -49,11 +72,19 @@ export function payloadFromPrRateLimit(
   };
 }
 
+/** SHA + pass selection (#2027): `pass` is one exact attempt, `afterPass` a later one on the head. */
+export type ReviewGetPrOptions = {
+  afterSha?: string;
+  pass?: number;
+  afterPass?: number;
+};
+
 export async function reviewGetPr(
   owner: string,
   repo: string,
   prNumber: number,
   cfg?: Config,
+  opts: ReviewGetPrOptions = {},
 ): Promise<ToolPayload> {
   const target = prReviewTarget(owner, repo, prNumber);
   try {
@@ -62,6 +93,7 @@ export async function reviewGetPr(
       target.repo,
       target.prNumber,
       cfg,
+      { afterSha: opts.afterSha, pass: opts.pass, afterPass: opts.afterPass },
     );
     return payloadFromPrReview(
       target.owner,

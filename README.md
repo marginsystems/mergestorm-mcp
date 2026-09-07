@@ -1,10 +1,12 @@
 # mergestorm-mcp
 
-Stdio MCP server for Mergestorm. Tools: `whoami`, `credits`, `review_list`, `review_get`, `review_get_pr`, `review_submit`, `review_wait`, `review_wait_pr`, `stack_list`, `stack_status`, `queue_status`, `settings_get`, `settings_set`.
+Stdio MCP server for Mergestorm. Tools: `whoami`, `credits`, `review_list`, `review_get`, `review_get_pr`, `review_submit`, `review_wait`, `review_wait_pr`, `stack_adopt`, `stack_list`, `stack_set`, `stack_status`, `queue_status`, `settings_get`, `settings_set`.
 
-The stack tools are read-only:
+The stack tools expose reads plus one scoped policy write:
 
+- `stack_adopt({ owner, repo, pr_number, auto_land?, auto_review?, auto_patch? })` adopts an open PR chain with optional per-stack policy. `auto_patch` defaults to `false` and accepts only `false` or `null`; `null` clears the override. Read `stack_status` with the returned `result.stack.id` to verify policy and Cyclone ownership.
 - `stack_list` returns the current API key owner's registered stacks.
+- `stack_set({ stack_id, auto_land?, auto_review?, auto_patch? })` sets per-stack policy on one owned stack. `auto_land` flips Auto land. `auto_review` and `auto_patch` pin Vortex auto-review or Cyclone auto-patch for that stack in either direction (`true` or `false`); `null` clears the pin so the stack follows the account setting. Pass at least one key. Account settings are never changed here.
 - `stack_status({ stack_id })` returns one owned stack with enriched checks and agent state, or a structured `stack_not_found` error.
 
 Auth is `MERGESTORM_API_KEY`, then `~/.mergestorm/config.json` (same as `mg`).

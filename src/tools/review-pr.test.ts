@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 import type { PrVortexReview } from "mergestorm/client";
 import { MCP_TOOL_NAMES } from "../server.js";
-import { reviewGetPr } from "./review-get-pr.js";
+import { prReviewSummary, reviewGetPr } from "./review-get-pr.js";
 import { reviewWaitPr } from "./review-wait-pr.js";
+import { MCP_PR_WAIT_DEFAULT_S, MCP_WAIT_CEILING_S, waitTimeoutMs } from "./review-submit.js";
 
 const cfg = {
   apiKey: "msk_live_test_mcp_pr",
@@ -79,6 +80,10 @@ describe("PR review tools", { concurrency: false }, () => {
     assert.equal(urls[0]?.includes("/stacks/enrich"), false);
     assert.equal(urls[0]?.includes("/api/v1/reviews"), false);
     assert.equal(result.data.schema, "mergestorm.pr_review/v1");
+    assert.equal(
+      result.summary,
+      "acme/widgets#12 · completed · sha abc123d · 0 findings",
+    );
   });
 
   test("review_wait_pr polls until the pass completes", async () => {
@@ -154,7 +159,7 @@ describe("PR review tools", { concurrency: false }, () => {
 
     assert.equal(result.data.status, "completed");
     assert.equal(result.data.head_sha, "def456789abc");
-    assert.match(result.summary, /· completed$/);
+    assert.match(result.summary, /· completed · sha def4567 · 0 findings$/);
   });
 
   test("review_wait_pr returns rate_limited after retry exhaustion", async () => {
@@ -186,7 +191,58 @@ describe("PR review tools", { concurrency: false }, () => {
     assert.ok(MCP_TOOL_NAMES.includes("review_wait_pr"));
     assert.deepEqual(
       MCP_TOOL_NAMES.filter((name) => name.startsWith("stack_")),
-      ["stack_list", "stack_status"],
+      ["stack_adopt", "stack_list", "stack_set", "stack_status"],
     );
   });
+});
+
+test("prReviewSummary includes sha, finding count, and phase for the host", () => {
+  assert.equal(
+    prReviewSummary("acme", "widgets", 12, {
+      status: "completed",
+      head_sha: "abc123def456",
+      finding_count: 1,
+      phase: null,
+    }),
+    "acme/widgets#12 · completed · sha abc123d · 1 finding",
+  );
+  assert.equal(
+    prReviewSummary("acme", "widgets", 12, {
+      status: "in_progress",
+      head_sha: "abc123def456",
+      finding_count: 0,
+      phase: "synthesizing",
+    }),
+    "acme/widgets#12 · in_progress · sha abc123d · 0 findings · synthesizing",
+  );
+});
+
+test("local and PR review waits default to 45s slices with a 300s ceiling", () => {
+  assert.equal(MCP_PR_WAIT_DEFAULT_S, 45);
+  assert.equal(waitTimeoutMs(undefined, MCP_PR_WAIT_DEFAULT_S), 45_000);
+  assert.equal(waitTimeoutMs(undefined), 45_000);
+  assert.equal(MCP_WAIT_CEILING_S, 300);
+  assert.equal(waitTimeoutMs(300), 300_000);
+  assert.equal(waitTimeoutMs(600), 300_000);
+});
+
+test("get forwards SHA and exact pass", async () => {
+  const urls = mockPrFetch([{ status: 200, body: { ...review("completed"), pass: 2 } }]);
+  const result = await reviewGetPr("acme", "widgets", 12, cfg, { afterSha: "abc123d", pass: 2 });
+  const query = new URL(urls[0]!).searchParams;
+  assert.equal(query.get("after_sha"), "abc123d");
+  assert.equal(query.get("pass"), "2");
+  assert.equal(result.data.pass, 2);
+});
+
+test("wait keeps after_pass fixed until a later pass completes", async () => {
+  const urls = mockPrFetch([
+    { status: 200, body: { ...review("completed"), pass: 1 } },
+    { status: 200, body: { ...review("in_progress"), pass: 2 } },
+    { status: 200, body: { ...review("completed"), pass: 2 } },
+  ]);
+  const result = await reviewWaitPr("acme", "widgets", 12, "abc123d", 1, cfg, { afterPass: 1, pollIntervalMs: 1 });
+  assert.equal(result.data.pass, 2);
+  assert.equal(urls.length, 3);
+  for (const url of urls) assert.equal(new URL(url).searchParams.get("after_pass"), "1");
 });
