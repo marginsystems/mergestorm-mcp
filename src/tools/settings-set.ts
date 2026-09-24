@@ -1,5 +1,6 @@
 import {
   CommandError,
+  BEARER_SETTINGS,
   SETTINGS_WRITABLE_KEYS,
   patchSettings,
   type Config,
@@ -31,10 +32,19 @@ export function settingsPatchFromArgs(
   for (const key of SETTINGS_WRITABLE_KEYS) {
     const value = args[key];
     if (value === undefined) continue;
+    const row = BEARER_SETTINGS.find((row) => row.key === key)!;
+    if ("kind" in row) {
+      const valid = row.kind === "logins"
+        ? Array.isArray(value) && value.every((login) => typeof login === "string")
+        : typeof value === "string" && (row.values as readonly string[]).includes(value);
+      if (!valid) throw new CommandError(`Invalid value for ${key}.`, 2, "usage");
+      Object.assign(patch, { [key]: value });
+      continue;
+    }
     if (typeof value !== "boolean") {
       throw new CommandError(`${key} takes a boolean.`, 2, "usage");
     }
-    patch[key] = value;
+    Object.assign(patch, { [key]: value });
   }
   if (Object.keys(patch).length === 0) {
     throw new CommandError(

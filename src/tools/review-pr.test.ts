@@ -141,11 +141,19 @@ describe("PR review tools", { concurrency: false }, () => {
     );
 
     assert.equal(result.data.status, "in_progress");
+    assert.equal(result.data.finding_count, null);
     assert.match(String(result.data.error), /Timed out waiting/);
   });
 
-  test("review_wait_pr timeout preserves a resting mismatched-SHA status", async () => {
-    mockPrFetch([{ status: 200, body: review("completed", "def456789abc") }]);
+  test("review_wait_pr timeout on a resting mismatched SHA stays in_progress and is not a completion", async () => {
+    mockPrFetch([{
+      status: 200,
+      body: {
+        ...review("completed", "def456789abc"),
+        raw_status: "completed",
+        findings: [{ rule: "foreign-pass" }],
+      },
+    }]);
 
     const result = await reviewWaitPr(
       "acme",
@@ -157,9 +165,16 @@ describe("PR review tools", { concurrency: false }, () => {
       { pollIntervalMs: 1 },
     );
 
-    assert.equal(result.data.status, "completed");
+    assert.equal(result.data.status, "in_progress");
+    assert.equal(result.data.raw_status, undefined);
+    assert.equal(result.data.verdict, undefined);
+    assert.equal(result.data.findings, undefined);
+    assert.equal(result.data.finding_count, null);
     assert.equal(result.data.head_sha, "def456789abc");
-    assert.match(result.summary, /· completed · sha def4567 · 0 findings$/);
+    assert.equal(result.data.pass, null);
+    assert.match(result.summary, /in_progress/);
+    assert.doesNotMatch(result.summary, /completed/);
+    assert.doesNotMatch(result.summary, /0 findings/);
   });
 
   test("review_wait_pr returns rate_limited after retry exhaustion", async () => {
@@ -189,9 +204,10 @@ describe("PR review tools", { concurrency: false }, () => {
   test("registers PR review tools without changing stack tools", () => {
     assert.ok(MCP_TOOL_NAMES.includes("review_get_pr"));
     assert.ok(MCP_TOOL_NAMES.includes("review_wait_pr"));
+    assert.ok(MCP_TOOL_NAMES.includes("queue_status"));
     assert.deepEqual(
       MCP_TOOL_NAMES.filter((name) => name.startsWith("stack_")),
-      ["stack_adopt", "stack_list", "stack_set", "stack_status"],
+      ["stack_adopt", "stack_list", "stack_set", "stack_status", "stack_wait"],
     );
   });
 });
@@ -245,4 +261,22 @@ test("wait keeps after_pass fixed until a later pass completes", async () => {
   assert.equal(result.data.pass, 2);
   assert.equal(urls.length, 3);
   for (const url of urls) assert.equal(new URL(url).searchParams.get("after_pass"), "1");
+});
+
+test("review_wait_pr default slice is one read-only wait=45 GET", async (t) => {
+  let now = 0;
+  let calls = 0;
+  t.mock.method(Date, "now", () => now);
+  t.mock.method(globalThis, "fetch", async (input: string, init?: RequestInit) => {
+    calls++;
+    const url = new URL(input);
+    assert.equal(url.pathname, "/api/v1/stacks/pr-review");
+    assert.equal(url.searchParams.get("wait"), "45");
+    assert.equal(init?.method ?? "GET", "GET");
+    now += 45_000;
+    return Response.json(review("in_progress"));
+  });
+  const result = await reviewWaitPr("acme", "widgets", 12, undefined, undefined, cfg);
+  assert.equal(calls, 1);
+  assert.equal(result.data.status, "in_progress");
 });

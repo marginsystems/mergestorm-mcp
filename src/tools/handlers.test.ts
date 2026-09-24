@@ -14,6 +14,7 @@ import { stackAdopt, type StackAdoptInput } from "./stack-adopt.js";
 import { stackList } from "./stack-list.js";
 import { stackSet } from "./stack-set.js";
 import { stackStatus } from "./stack-status.js";
+import { stackSummary } from "./stack-summary.js";
 import { whoami } from "./whoami.js";
 
 const cfg = {
@@ -56,8 +57,12 @@ function mockFetch(
   headers: Record<string, string> = {},
 ): void {
   originalFetch ??= globalThis.fetch;
-  globalThis.fetch = async () =>
-    new Response(JSON.stringify(body), {
+  globalThis.fetch = async (input) =>
+    new Response(JSON.stringify(
+      String(input).endsWith("/stacks/queue") && status === 200 && body && typeof body === "object" && "stacks" in body
+        ? { entries: [] }
+        : body,
+    ), {
       status,
       headers: { "Content-Type": "application/json", ...headers },
     });
@@ -163,10 +168,53 @@ test("stack_list returns owned stack DTOs with factual state summaries", async (
   const result = await stackList(cfg);
   assert.equal(
     result.summary,
-    "acme/widgets · 2 layers · layers: clean, needs_restack · auto-land off",
+    "acme/widgets · 2 layers · restack: clean, needs_restack · auto-land off",
   );
   const stacks = result.data.stacks as Array<{ id: string }>;
   assert.equal(stacks[0]?.id, "stack-1");
+});
+
+test("stack_list preserves live gate blockers during queue activity", async () => {
+  const stack = {
+    id: "queued-stack",
+    owner: "acme",
+    repo: "widgets",
+    layers: [{ prNumber: 7, position: 1, state: "clean", draft: true }],
+  };
+  originalFetch ??= globalThis.fetch;
+  globalThis.fetch = async (input) => Response.json(
+    String(input).endsWith("/stacks/queue")
+      ? { entries: [{ stackId: stack.id, state: "queued" }] }
+      : { stacks: [stack] },
+  );
+  const result = await stackList(cfg);
+  assert.match(result.summary, /blocked: #7 Draft PR/);
+});
+
+test("stack list and status surface queue API failures", async () => {
+  originalFetch ??= globalThis.fetch;
+  const stack = {
+    id: "queue-failed-stack",
+    owner: "acme",
+    repo: "widgets",
+    layers: [{ state: "clean" }],
+  };
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/stacks/queue")) return Response.json({ error: "queue_failed" }, { status: 503 });
+    return Response.json({ stacks: [stack] });
+  };
+
+  await assert.rejects(
+    () => stackList(cfg),
+    (err: unknown) => err instanceof CommandError &&
+      err.message === 'Failed to list merge queue (HTTP 503): {"error":"queue_failed"}',
+  );
+  await assert.rejects(
+    () => stackStatus(stack.id, cfg),
+    (err: unknown) => err instanceof CommandError &&
+      err.message === 'Failed to list merge queue (HTTP 503): {"error":"queue_failed"}',
+  );
 });
 
 test("stack_status summary includes cycloneOwnerMatch when present", async () => {
@@ -186,7 +234,7 @@ test("stack_status summary includes cycloneOwnerMatch when present", async () =>
   const result = await stackStatus("stack-9", cfg);
   assert.equal(
     result.summary,
-    "acme/widgets · 1 layer · layers: clean · auto-land off · cyclone-owner different",
+    "acme/widgets · 1 layer · restack: clean · auto-land off · cyclone-owner different",
   );
   const stack = result.data.stack as {
     cycloneOwnerMatch: string;
@@ -212,7 +260,7 @@ test("stack_status returns one enriched owned stack", async () => {
   const result = await stackStatus("stack-9", cfg);
   assert.equal(
     result.summary,
-    "acme/widgets · 1 layer · layers: clean · auto-land off",
+    "acme/widgets · 1 layer · restack: clean · auto-land off",
   );
   assert.equal(result.isError, undefined);
   const stack = result.data.stack as { id: string; layers: Array<{ checks: unknown }> };
@@ -306,12 +354,41 @@ test("queue_status lists live entries over the Bearer queue endpoint", async () 
   const result = await queueStatus(undefined, cfg);
   assert.equal(requestUrl, "https://api.example.test/api/v1/stacks/queue");
   assert.equal(authorization, `Bearer ${cfg.apiKey}`);
-  assert.equal(result.summary, "#1 · acme/widgets · stack stack-1 · waiting");
+  assert.equal(result.summary, "waiting · acme/widgets · stack stack-1");
   const entries = result.data.entries as Array<{ id: string }>;
   assert.equal(entries[0]?.id, "queue-1");
 });
 
-test("queue_status filters a live entry by stack_id", async () => {
+test("queue_status describes bounced entries with kind and head sha", async () => {
+  mockFetch(200, {
+    entries: [
+      {
+        id: "queue-bounced",
+        stackId: "stack-1",
+        owner: "acme",
+        repo: "widgets",
+        state: "bounced",
+        position: 0,
+        waitReason: null,
+        bounceReason: "ci_failure",
+        bounceDetail: {
+          kind: "ci_failure",
+          prNumber: 42,
+          headSha: "abcdef1234567890",
+        },
+        verifyHeadSha: null,
+      },
+    ],
+  });
+
+  const result = await queueStatus(undefined, cfg);
+  assert.equal(
+    result.summary,
+    "bounced · acme/widgets#42 · stack stack-1 · ci_failure · abcdef1",
+  );
+});
+
+test("queue_status filters all live and bounced entries by stack_id", async () => {
   mockFetch(200, {
     entries: [
       {
@@ -321,21 +398,117 @@ test("queue_status filters a live entry by stack_id", async () => {
         repo: "widgets",
         state: "queued",
         position: 1,
+        waitReason: "awaiting_checks",
+        bounceReason: null,
+        bounceDetail: null,
+        verifyHeadSha: "1234567890abcdef",
       },
       {
-        id: "queue-2",
+        id: "queue-bounced",
+        stackId: "stack-1",
+        owner: "acme",
+        repo: "widgets",
+        state: "bounced",
+        position: 0,
+        waitReason: null,
+        bounceReason: "ci_failure",
+        bounceDetail: {
+          kind: "ci_failure",
+          prNumber: 42,
+          headSha: "abcdef1234567890",
+        },
+        verifyHeadSha: null,
+      },
+      {
+        id: "queue-other-stack",
         stackId: "stack-2",
         owner: "acme",
-        repo: "gadgets",
-        state: "running",
+        repo: "widgets",
+        state: "queued",
         position: 2,
+        waitReason: "awaiting_checks",
+        bounceReason: null,
+        bounceDetail: null,
+        verifyHeadSha: "fedcba9876543210",
       },
     ],
   });
 
-  const result = await queueStatus("stack-2", cfg);
-  assert.equal(result.summary, "#2 · acme/gadgets · stack stack-2 · running");
-  assert.equal((result.data.entry as { id: string }).id, "queue-2");
+  const result = await queueStatus("stack-1", cfg);
+  assert.equal(
+    result.summary,
+    "queued · acme/widgets · stack stack-1 · awaiting_checks · 1234567\n" +
+      "bounced · acme/widgets#42 · stack stack-1 · ci_failure · abcdef1",
+  );
+  const entries = result.data.entries as Array<{ id: string }>;
+  assert.deepEqual(entries.map((entry) => entry.id), ["queue-1", "queue-bounced"]);
+  assert.doesNotMatch(result.summary, /stack-2/);
+});
+
+test("queue_status scopes stack lookups before the capped bounced history read", async () => {
+  originalFetch ??= globalThis.fetch;
+  let requestUrl = "";
+  globalThis.fetch = async (input) => {
+    requestUrl = String(input);
+    const scoped = requestUrl.includes("?stackId=stack-1");
+    return Response.json({
+      entries: scoped
+        ? [{
+            id: "queue-bounced",
+            stackId: "stack-1",
+            owner: "acme",
+            repo: "widgets",
+            state: "bounced",
+            bounceReason: "ci_failure",
+          }]
+        : Array.from({ length: 10 }, (_, index) => ({
+            id: `other-${index}`,
+            stackId: "other-stack",
+            owner: "acme",
+            repo: "widgets",
+            state: "bounced",
+          })),
+    });
+  };
+
+  const result = await queueStatus("stack-1", cfg);
+  assert.equal(requestUrl, "https://api.example.test/api/v1/stacks/queue?stackId=stack-1");
+  assert.equal(result.isError, undefined);
+  assert.equal((result.data.entries as Array<{ id: string }>)[0]?.id, "queue-bounced");
+});
+
+test("queue_status matches UUID stack filters case-insensitively", async () => {
+  mockFetch(200, {
+    entries: [
+      {
+        id: "queue-uuid",
+        stackId: "123e4567-e89b-12d3-a456-426614174000",
+        owner: "acme",
+        repo: "widgets",
+        state: "queued",
+        position: 1,
+        waitReason: "awaiting_checks",
+        bounceReason: null,
+        bounceDetail: null,
+        verifyHeadSha: "1234567890abcdef",
+      },
+    ],
+  });
+
+  const result = await queueStatus("123E4567-E89B-12D3-A456-426614174000", cfg);
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(
+    (result.data.entries as Array<{ id: string }>).map((entry) => entry.id),
+    ["queue-uuid"],
+  );
+});
+
+test("queue_status describes an empty queue as neither live nor bounced", async () => {
+  mockFetch(200, { entries: [] });
+  const result = await queueStatus(undefined, cfg);
+  assert.equal(result.isError, undefined);
+  assert.equal(result.summary, "No merge queue entries (live or bounced)");
+  assert.deepEqual(result.data.entries, []);
 });
 
 test("queue_status returns a structured not-found error for a stack filter", async () => {
@@ -344,18 +517,25 @@ test("queue_status returns a structured not-found error for a stack filter", asy
   assert.equal(result.isError, true);
   assert.deepEqual(result.data.error, {
     code: "queue_entry_not_found",
-    message: "Live queue entry not found for stack: not-queued",
+    message: "Queue entry not found for stack: not-queued",
     stack_id: "not-queued",
   });
+  assert.doesNotMatch((result.data.error as { message: string }).message, /Live/);
 });
 
 const settingsBody = {
+  ignored_bot_logins: ["renovate"],
+  vortex_bot_skip_check: "none",
+  vortex_findings_check: "neutral",
+  cyclone_patch_failure_check: "failure",
   auto_review_enabled: true,
   auto_patch_enabled: false,
   vortex_show_thinking_traces: false,
   repo_overview_enabled: true,
   review_unit_land_prs_enabled: false,
   cyclone_review_unit_land_prs_enabled: false,
+  cyclone_skip_ci_enabled: true,
+  cyclone_patch_unverified_languages: false,
   vortex_seam_specialist_enabled: true,
   auto_land_default: false,
   cyclone_connected: true,
@@ -391,26 +571,58 @@ test("settings_get throws when the settings API is unavailable", async () => {
 });
 
 test("settings_set PATCHes only the provided writable keys", async () => {
-  originalFetch ??= globalThis.fetch;
-  let method = "";
-  let requestUrl = "";
-  let requestBody: unknown;
-  globalThis.fetch = async (input, init) => {
-    requestUrl = String(input);
-    method = init?.method ?? "GET";
-    requestBody = JSON.parse(String(init?.body));
-    return Response.json({ ...settingsBody, auto_patch_enabled: false });
-  };
+  const rows: ReadonlyArray<{
+    input: Record<string, unknown>;
+    body: Record<string, boolean>;
+    summary?: string;
+  }> = [
+    {
+      input: { auto_patch_enabled: false, vortex_seam_specialist_enabled: undefined },
+      body: { auto_patch_enabled: false },
+      summary: "auto_patch off · Cyclone connected",
+    },
+    {
+      input: { auto_patch_enabled: true },
+      body: { auto_patch_enabled: true },
+      summary: "auto_patch on · Cyclone connected",
+    },
+    {
+      input: { cyclone_skip_ci_enabled: false },
+      body: { cyclone_skip_ci_enabled: false },
+    },
+    {
+      input: { cyclone_patch_unverified_languages: true },
+      body: { cyclone_patch_unverified_languages: true },
+    },
+    {
+      input: { auto_land_default: true },
+      body: { auto_land_default: true },
+    },
+  ];
 
-  const result = await settingsSet(
-    { auto_patch_enabled: false, vortex_seam_specialist_enabled: undefined },
-    cfg,
-  );
-  assert.equal(requestUrl, "https://api.example.test/api/v1/settings");
-  assert.equal(method, "PATCH");
-  assert.deepEqual(requestBody, { auto_patch_enabled: false });
-  assert.equal(result.summary, "auto_patch off · Cyclone connected");
-  assert.equal(result.data.auto_patch_enabled, false);
+  for (const row of rows) {
+    originalFetch ??= globalThis.fetch;
+    let method = "";
+    let requestUrl = "";
+    let requestBody: unknown;
+    globalThis.fetch = async (input, init) => {
+      requestUrl = String(input);
+      method = init?.method ?? "GET";
+      requestBody = JSON.parse(String(init?.body));
+      return Response.json({ ...settingsBody, ...row.body });
+    };
+
+    const result = await settingsSet({ ...row.input }, cfg);
+    assert.equal(method, "PATCH");
+    assert.deepEqual(requestBody, row.body);
+    for (const [key, value] of Object.entries(row.body)) {
+      assert.equal(result.data[key], value);
+    }
+    if ("auto_patch_enabled" in row.body) {
+      assert.equal(requestUrl, "https://api.example.test/api/v1/settings");
+      assert.equal(result.summary, row.summary);
+    }
+  }
 });
 
 test("settings_set with no keys is a usage error", async () => {
@@ -432,41 +644,11 @@ test("settings_set rejects read-only keys", async () => {
   }
 });
 
-test("settings_set rejects non-boolean values as usage errors", async () => {
+test("settings_set rejects non-boolean values for boolean keys as usage errors", async () => {
   await assert.rejects(
     () => settingsSet({ auto_patch_enabled: "off" }, cfg),
     (err: unknown) => err instanceof CommandError && err.code === "usage",
   );
-});
-
-test("settings_set PATCHes auto_patch_enabled true", async () => {
-  originalFetch ??= globalThis.fetch;
-  let requestBody: unknown;
-  globalThis.fetch = async (_input, init) => {
-    requestBody = JSON.parse(String(init?.body));
-    return Response.json({ ...settingsBody, auto_patch_enabled: true });
-  };
-
-  const result = await settingsSet({ auto_patch_enabled: true }, cfg);
-  assert.deepEqual(requestBody, { auto_patch_enabled: true });
-  assert.equal(result.summary, "auto_patch on · Cyclone connected");
-  assert.equal(result.data.auto_patch_enabled, true);
-});
-
-test("settings_set PATCHes auto_land_default true", async () => {
-  originalFetch ??= globalThis.fetch;
-  let method = "";
-  let requestBody: unknown;
-  globalThis.fetch = async (_input, init) => {
-    method = init?.method ?? "GET";
-    requestBody = JSON.parse(String(init?.body));
-    return Response.json({ ...settingsBody, auto_land_default: true });
-  };
-
-  const result = await settingsSet({ auto_land_default: true }, cfg);
-  assert.equal(method, "PATCH");
-  assert.deepEqual(requestBody, { auto_land_default: true });
-  assert.equal(result.data.auto_land_default, true);
 });
 
 test("stack read handlers surface API errors", async () => {
@@ -581,7 +763,9 @@ const adoptPolicies: Array<
 > = [
   {},
   { auto_land: false, auto_review: null, auto_patch: false },
+  { auto_land: true },
   { auto_land: false, auto_review: true, auto_patch: null },
+  { auto_patch: true },
   { auto_review: false, auto_patch: null },
 ];
 for (const policy of adoptPolicies) {
@@ -619,7 +803,7 @@ test("stack_adopt rejects invalid input without calling the API", async () => {
     { owner: "acme", pr_number: 42 },
     { owner: "acme", repo: "widgets" },
     ...[{ owner: " " }, { repo: "" }, { pr_number: 0 }, { pr_number: 1.5 },
-      { auto_land: null }, { auto_land: true }, { auto_patch: "off" }, { auto_patch: true }].map((override) => ({
+      { auto_land: null }, { auto_patch: "off" }].map((override) => ({
         owner: "acme", repo: "widgets", pr_number: 42, ...override,
       })),
   ]) {
@@ -635,7 +819,21 @@ test("stack_adopt returns a structured API failure", async () => {
   const result = await stackAdopt({ owner: "acme", repo: "widgets", pr_number: 42 }, cfg);
   assert.equal(result.isError, true);
   assert.match(result.summary, /Failed to import stack.*503/);
-  assert.equal((result.data.error as { code: string }).code, "stack_adopt_failed");
+  assert.equal((result.data.error as { code: string }).code, "busy");
+});
+
+test("stack_adopt surfaces the Cyclone installation sentence and code", async () => {
+  mockFetch(400, {
+    error: "cyclone_not_installed",
+    message: "Install Cyclone on this repository, then adopt. Cyclone is required for stacks.",
+  });
+  const result = await stackAdopt({ owner: "acme", repo: "widgets", pr_number: 42 }, cfg);
+  assert.equal(result.isError, true);
+  assert.equal(
+    result.summary,
+    "Install Cyclone on this repository, then adopt. Cyclone is required for stacks.",
+  );
+  assert.equal((result.data.error as { code: string }).code, "cyclone_not_installed");
 });
 
 test("stack_adopt returns rate-limit details from the API", async () => {
@@ -668,3 +866,194 @@ test("MCP stack_adopt rejects missing target fields before calling the API", asy
     await server.close();
   }
 });
+
+for (const patch of [
+  { vortex_findings_check: "failure" },
+  { ignored_bot_logins: ["renovate"] },
+]) {
+  test(`settings_set PATCHes ${JSON.stringify(patch)}`, async () => {
+    originalFetch ??= globalThis.fetch;
+    globalThis.fetch = async (_input, init) => {
+      assert.equal(init?.method, "PATCH");
+      assert.deepEqual(JSON.parse(String(init?.body)), patch);
+      return Response.json({ ...settingsBody, ...patch });
+    };
+    const result = await settingsSet(patch, cfg);
+    assert.deepEqual(result.data, { ...settingsBody, ...patch });
+  });
+}
+
+test("settings_set rejects wrong list and enum types", async () => {
+  for (const patch of [{ ignored_bot_logins: "renovate" }, { ignored_bot_logins: [4] }, { vortex_findings_check: "none" }, { vortex_bot_skip_check: true }]) {
+    await assert.rejects(() => settingsSet(patch, cfg), (e: unknown) => e instanceof CommandError && e.code === "usage");
+  }
+});
+
+test("MCP settings_set schema accepts lists and enums over transport", async () => {
+  originalApiKey = process.env.MERGESTORM_API_KEY;
+  process.env.MERGESTORM_API_KEY = cfg.apiKey;
+  originalFetch ??= globalThis.fetch;
+  const patch = { ignored_bot_logins: ["renovate"], vortex_findings_check: "failure", vortex_bot_skip_check: "neutral", cyclone_patch_failure_check: "neutral" };
+  globalThis.fetch = async (_input, init) => {
+    assert.deepEqual(JSON.parse(String(init?.body)), patch);
+    return Response.json({ ...settingsBody, ...patch });
+  };
+  const server = createMergestormMcpServer();
+  const client = new Client({ name: "settings-test", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await client.callTool({ name: "settings_set", arguments: patch });
+    assert.ok(!result.isError);
+    assert.deepEqual(result.structuredContent, { ...settingsBody, ...patch });
+    for (const key of ["cyclone_connected", "github_connected"]) {
+      const rejected = await client.callTool({ name: "settings_set", arguments: { ...patch, [key]: true } });
+      assert.equal(rejected.isError, true);
+      assert.match(JSON.stringify(rejected.content), /read-only/);
+    }
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("stack_status appends the shared CI blocker label and preserves summary fields", async () => {
+  mockFetch(200, { stacks: [{
+    id: "blocked-stack", owner: "acme", repo: "widgets",
+    autoEnqueueWhenReady: true, autoReviewOverride: false,
+    layers: [{ prNumber: 7, position: 1, state: "clean", ciStatus: "failure",
+      checks: { failure: 1, failingName: "unit tests" } }],
+  }] });
+  const result = await stackStatus("blocked-stack", cfg);
+  assert.equal(result.summary,
+    "acme/widgets · 1 layer · restack: clean · auto-land on · auto-review off · blocked: #7 CI failed — unit tests");
+});
+
+for (const scenario of ["current", "new head", "requeued", "different PR", "closed", "no SHA", "newer bounce"] as const) {
+  test(`stack_status CI bounce summary: ${scenario}`, async () => {
+    const stack = {
+      id: "bounced-stack", owner: "acme", repo: "widgets",
+      layers: [{ prNumber: 7, position: 1, state: scenario === "closed" ? "closed" : "clean",
+        headSha: scenario === "new head" ? "b".repeat(40) : "a".repeat(40), ciStatus: "success" }],
+    };
+    const bounce = {
+      stackId: stack.id, state: "bounced", finishedAt: "2026-09-19T00:00:00Z",
+      bounceDetail: { kind: "ci_failure", prNumber: scenario === "different PR" ? 8 : 7,
+        headSha: scenario === "no SHA" ? undefined : "aaaaaaa", failingCheck: "unit tests" },
+    };
+    const entries: unknown[] = [bounce];
+    if (scenario === "requeued") entries.push({ stackId: stack.id, state: "queued" });
+    if (scenario === "newer bounce") entries.push({ ...bounce,
+      finishedAt: "2026-09-19T01:00:00Z", bounceDetail: { kind: "head_moved" } });
+    originalFetch ??= globalThis.fetch;
+    globalThis.fetch = async (input) => Response.json(
+      String(input).endsWith("/stacks/queue") ? { entries } : { stacks: [stack] },
+    );
+    const result = await stackStatus(stack.id, cfg);
+    if (scenario === "current") assert.match(result.summary, /blocked: #7 CI failed — unit tests$/);
+    else assert.doesNotMatch(result.summary, /blocked:/);
+  });
+}
+
+test("stack_status selects the unpromoted blocker or the unit land PR", async () => {
+  for (const promotedHeadSha of [null, "old-head"]) {
+    mockFetch(200, { stacks: [{
+      id: "unit-stack", owner: "acme", repo: "widgets",
+      layers: [{ prNumber: 7, position: 1, state: "clean", ciStatus: "failure",
+        checks: { failingName: "member tests" } }],
+      unit: { state: "growing", landPrNumber: 99,
+        members: [{ prNumber: 7, promotedHeadSha }],
+        landPr: { prNumber: 99, state: "clean", ciStatus: "failure",
+          checks: { failingName: "land tests" } } },
+    }] });
+    const result = await stackStatus("unit-stack", cfg);
+    assert.match(result.summary, new RegExp(`blocked: #${promotedHeadSha ? 99 : 7} CI failed — ${promotedHeadSha ? "land" : "member"} tests`));
+  }
+});
+
+test("stack_status reports a unit land gate blocker", async () => {
+  mockFetch(200, { stacks: [{
+    id: "unit-gated-stack", owner: "acme", repo: "widgets", layers: [],
+    unit: {
+      state: "growing", landPrNumber: 99,
+      tempestLandStatus: "failed", landingBlockReason: "tempest_failed on land PR #99",
+      members: [], landPr: { prNumber: 99, state: "clean" },
+    },
+  }] });
+  const result = await stackStatus("unit-gated-stack", cfg);
+  assert.match(result.summary, /blocked: #99 tempest_failed on land PR #99$/);
+});
+
+test("stack_status never lets a recoverable bounce suppress current-head project CI failure", async () => {
+  const stack = {
+    id: "moved-stack", owner: "acme", repo: "widgets",
+    autoEnqueueWhenReady: true,
+    layers: [{ prNumber: 7, position: 1, state: "clean", headSha: "a".repeat(40),
+      ciStatus: "failure", checks: { failure: 1, failingName: "old tests" } }],
+  };
+  originalFetch ??= globalThis.fetch;
+  globalThis.fetch = async (input) => Response.json(
+    String(input).endsWith("/stacks/queue")
+      ? { entries: [{ stackId: stack.id, state: "bounced", finishedAt: "2026-09-19T00:00:00Z",
+          bounceDetail: { kind: "head_moved", prNumber: 7, headSha: "a".repeat(40) } }] }
+      : { stacks: [stack] },
+  );
+  const result = await stackStatus(stack.id, cfg);
+  assert.match(result.summary, /blocked: #7 CI failed — old tests/);
+});
+
+test("stack_status only uses the selected layer for bounce blockers", () => {
+  const summary = stackSummary({
+    id: "higher-bounce-stack", owner: "acme", repo: "widgets", layers: [
+      { prNumber: 7, position: 1, state: "clean", headSha: "a".repeat(40), ciStatus: "failure",
+        checks: { failure: 1, failingName: "old tests" } },
+      { prNumber: 8, position: 2, state: "clean", headSha: "b".repeat(40) },
+    ],
+  } as Parameters<typeof stackSummary>[0], [{
+    stackId: "higher-bounce-stack", state: "bounced",
+    bounceDetail: { kind: "head_moved", prNumber: 8, headSha: "b".repeat(40) },
+  }] as Parameters<typeof stackSummary>[1]);
+  assert.match(summary, /blocked: #7 CI failed — old tests$/);
+});
+
+test("stack_status skips placeholder layers when selecting a blocker", () => {
+  const summary = stackSummary({
+    id: "placeholder-stack", owner: "acme", repo: "widgets",
+    trunkBranch: "main", landTarget: "main", archivedAt: null,
+    layers: [
+      { prNumber: 0, position: 1, state: "clean", restackError: { kind: "rebase_conflict" } },
+      { prNumber: 7, position: 2, state: "clean" },
+    ],
+  } as Parameters<typeof stackSummary>[0]);
+  assert.doesNotMatch(summary, /blocked:/);
+});
+
+test("stack_status does not match a bounce against a placeholder layer", () => {
+  const summary = stackSummary({
+    id: "placeholder-bounce-stack", owner: "acme", repo: "widgets",
+    trunkBranch: "main", landTarget: "main", archivedAt: null,
+    layers: [],
+    unit: { landPr: { prNumber: 0, state: "clean", headSha: "a".repeat(40) } },
+  } as unknown as Parameters<typeof stackSummary>[0], [{
+    stackId: "placeholder-bounce-stack", state: "bounced",
+    bounceDetail: { kind: "ci_failure", prNumber: 0, headSha: "a".repeat(40) },
+  }] as Parameters<typeof stackSummary>[1]);
+  assert.doesNotMatch(summary, /blocked:/);
+});
+
+for (const [detail, label] of [
+  [{ draft: true }, "Draft PR"],
+  [{ state: "conflict" }, "Conflict"],
+  [{ mergeable: false, mergeableHeadSha: "aaaaaaa" }, "Merge conflicts"],
+  [{ agentRuns: [{ agent: "tempest", status: "findings", sha: "aaaaaaa" }] }, "Tempest findings"],
+] as const) {
+  test(`stack_status names a hard blocker: ${label}`, async () => {
+    mockFetch(200, { stacks: [{
+      id: "blocked-stack", owner: "acme", repo: "widgets",
+      layers: [{ prNumber: 7, position: 1, state: "clean", headSha: "aaaaaaa", ...detail }],
+    }] });
+    const result = await stackStatus("blocked-stack", cfg);
+    assert.ok(result.summary.endsWith(`blocked: #7 ${label}`));
+  });
+}

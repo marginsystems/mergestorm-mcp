@@ -54,17 +54,31 @@ export async function reviewWaitPr(
     );
   } catch (err) {
     if (err instanceof PrReviewPollTimeoutError) {
-      const status = err.lastEnvelope?.status ?? "in_progress";
+      const status = "in_progress";
+      const expectedSha = afterSha?.trim().toLowerCase() ?? "";
+      const observedSha = err.lastEnvelope?.head_sha?.trim().toLowerCase() ?? "";
+      const headShaMatches =
+        Boolean(
+          observedSha &&
+            expectedSha.length >= 7 &&
+            (observedSha.startsWith(expectedSha) || expectedSha.startsWith(observedSha)),
+        );
+      const findingCount = headShaMatches
+        ? err.lastEnvelope?.finding_count ?? null
+        : null;
       return {
         summary: prReviewSummary(target.owner, target.repo, target.prNumber, {
           status,
           head_sha: err.lastEnvelope?.head_sha ?? null,
-          finding_count: err.lastEnvelope?.finding_count ?? null,
+          finding_count: findingCount,
           phase: err.lastEnvelope?.phase ?? null,
         }),
         data: {
-          ...(err.lastEnvelope ?? {}),
           status,
+          head_sha: err.lastEnvelope?.head_sha ?? null,
+          pass: headShaMatches ? err.lastEnvelope?.pass ?? null : null,
+          finding_count: findingCount,
+          phase: err.lastEnvelope?.phase ?? null,
           error: err.message,
         },
       };

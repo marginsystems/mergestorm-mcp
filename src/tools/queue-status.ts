@@ -6,34 +6,38 @@ import {
   rateLimitedMessage,
   REVIEW_EXIT,
   type Config,
+  type MergeQueueEntryDto,
 } from "mergestorm/client";
 import type { ToolPayload } from "./types.js";
 
-type QueueEntry = {
-  id?: string;
-  stackId?: string;
-  owner?: string;
-  repo?: string;
-  state?: string;
-  position?: number;
-};
-
-function entrySummary(entry: QueueEntry): string {
-  const repo = entry.owner && entry.repo ? `${entry.owner}/${entry.repo}` : "unknown repo";
-  const position = entry.position === undefined ? "queue" : `#${entry.position}`;
-  return `${position} · ${repo} · stack ${entry.stackId ?? "unknown"} · ${entry.state ?? "unknown"}`;
+function entrySummary(entry: MergeQueueEntryDto): string {
+  const prNumber = entry.bounceDetail?.prNumber;
+  const repo = `${entry.owner}/${entry.repo}${prNumber ? `#${prNumber}` : ""}`;
+  const reason =
+    entry.bounceDetail?.kind ?? entry.bounceReason ?? entry.waitReason ?? undefined;
+  const sha = entry.bounceDetail?.headSha ?? entry.verifyHeadSha ?? undefined;
+  return [
+    entry.state,
+    repo,
+    `stack ${entry.stackId}`,
+    reason,
+    sha?.slice(0, 7),
+  ].filter(Boolean).join(" · ");
 }
 
 export async function queueStatus(stackId?: string, cfg?: Config): Promise<ToolPayload> {
   try {
     const resolved = cfg ?? (await loadConfig());
+    const id = stackId?.trim();
     const { status, body, retryAfterSeconds } = await apiFetch(
       resolved,
-      "/api/v1/stacks/queue",
+      id
+        ? `/api/v1/stacks/queue?stackId=${encodeURIComponent(id)}`
+        : "/api/v1/stacks/queue",
     );
     if (status === 404) {
       throw new CommandError(
-        "Merge queue API is not available on this server yet. Deploy the API update or use the dashboard.",
+        "Merge queue route returned 404. Deploy the API.",
       );
     }
     if (status === 429) {
@@ -50,18 +54,19 @@ export async function queueStatus(stackId?: string, cfg?: Config): Promise<ToolP
       );
     }
 
-    const entries = (body as { entries?: QueueEntry[] }).entries;
+    const entries = (body as { entries?: MergeQueueEntryDto[] }).entries;
     if (!Array.isArray(entries)) {
       throw new CommandError(
         `Failed to get queue status (HTTP 200): ${JSON.stringify(body)}`,
       );
     }
 
-    const id = stackId?.trim();
     if (id) {
-      const entry = entries.find((candidate) => candidate?.stackId === id);
-      if (!entry) {
-        const message = `Live queue entry not found for stack: ${id}`;
+      const matchingEntries = entries.filter(
+        (candidate) => candidate?.stackId?.toLowerCase() === id.toLowerCase(),
+      );
+      if (matchingEntries.length === 0) {
+        const message = `Queue entry not found for stack: ${id}`;
         return {
           summary: message,
           data: {
@@ -75,15 +80,15 @@ export async function queueStatus(stackId?: string, cfg?: Config): Promise<ToolP
         };
       }
       return {
-        summary: entrySummary(entry),
-        data: { entry },
+        summary: matchingEntries.map(entrySummary).join("\n"),
+        data: { entries: matchingEntries },
       };
     }
 
     return {
       summary:
         entries.length === 0
-          ? "No live merge queue entries"
+          ? "No merge queue entries (live or bounced)"
           : entries.map(entrySummary).join("\n"),
       data: { entries },
     };

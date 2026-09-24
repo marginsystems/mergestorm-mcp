@@ -1,4 +1,10 @@
-import { getEnrichedStack, isCommandErrorCode, type Config } from "mergestorm/client";
+import {
+  getEnrichedStack,
+  listMergeQueueEntries,
+  isCommandErrorCode,
+  type Config,
+  type MergeQueueEntryDto,
+} from "mergestorm/client";
 import { stackSummary } from "./stack-summary.js";
 import type { ToolPayload } from "./types.js";
 
@@ -19,8 +25,9 @@ export async function stackStatus(stackId: string, cfg?: Config): Promise<ToolPa
         isError: true,
       };
     }
+    const entries: MergeQueueEntryDto[] = await listMergeQueueEntries(cfg);
     return {
-      summary: stackSummary(stack),
+      summary: stackSummary(stack, entries),
       data: { stack },
     };
   } catch (err) {

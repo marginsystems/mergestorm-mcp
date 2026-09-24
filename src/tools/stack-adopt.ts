@@ -7,9 +7,9 @@ export const stackAdoptSchema = {
   owner: z.string().trim().min(1),
   repo: z.string().trim().min(1),
   pr_number: z.number().int().min(1),
-  auto_land: z.literal(false).optional(),
+  auto_land: z.boolean().optional(),
   auto_review: z.boolean().nullable().optional(),
-  auto_patch: z.literal(false).nullable().optional(),
+  auto_patch: z.boolean().nullable().optional(),
 };
 const inputSchema = z.object(stackAdoptSchema);
 export type StackAdoptInput = z.infer<typeof inputSchema>;

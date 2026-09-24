@@ -1,15 +1,22 @@
-import { isCommandErrorCode, listStacks, type Config } from "mergestorm/client";
+import {
+  isCommandErrorCode,
+  listMergeQueueEntries,
+  listStacks,
+  type Config,
+  type MergeQueueEntryDto,
+} from "mergestorm/client";
 import { stackSummary } from "./stack-summary.js";
 import type { ToolPayload } from "./types.js";
 
 export async function stackList(cfg?: Config): Promise<ToolPayload> {
   try {
     const stacks = await listStacks(cfg);
+    const entries: MergeQueueEntryDto[] = await listMergeQueueEntries(cfg);
     return {
       summary:
         stacks.length === 0
           ? "No stacks"
-          : stacks.map((stack) => stackSummary(stack)).join("\n"),
+          : stacks.map((stack) => stackSummary(stack, entries)).join("\n"),
       data: { stacks },
     };
   } catch (err) {

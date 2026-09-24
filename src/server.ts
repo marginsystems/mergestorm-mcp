@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { CommandError, SETTINGS_WRITABLE_KEYS } from "mergestorm/client";
+import { CommandError, BEARER_SETTINGS } from "mergestorm/client";
 import { credits } from "./tools/credits.js";
 import { queueStatus } from "./tools/queue-status.js";
 import { reviewGetPr } from "./tools/review-get-pr.js";
@@ -14,13 +14,14 @@ import { settingsSet } from "./tools/settings-set.js";
 import { stackAdopt, stackAdoptSchema } from "./tools/stack-adopt.js";
 import { stackList } from "./tools/stack-list.js";
 import { stackSet } from "./tools/stack-set.js";
+import { stackWait, stackWaitSchema } from "./tools/stack-wait.js";
 import { stackStatus } from "./tools/stack-status.js";
 import type { ToolPayload } from "./tools/types.js";
 import { whoami } from "./tools/whoami.js";
-import { MCP_PR_LOOP_INSTRUCTIONS } from "./pr-loop-instructions.js";
+import { MCP_PR_LOOP_INSTRUCTIONS, MCP_STACK_WATCH_INSTRUCTIONS } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.1.5";
+export const MCP_SERVER_VERSION = "0.1.7";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -35,6 +36,7 @@ export const MCP_TOOL_NAMES = [
   "stack_list",
   "stack_set",
   "stack_status",
+  "stack_wait",
   "queue_status",
   "settings_get",
   "settings_set",
@@ -83,7 +85,7 @@ export function createMergestormMcpServer(): McpServer {
       name: MCP_SERVER_NAME,
       version: MCP_SERVER_VERSION,
     },
-    { instructions: MCP_PR_LOOP_INSTRUCTIONS },
+    { instructions: `${MCP_PR_LOOP_INSTRUCTIONS}\n\n${MCP_STACK_WATCH_INSTRUCTIONS}` },
   );
   // MCP SDK + zod generic inference hits TS2589 on several schemas; keep
   // runtime registerTool, drop the instantiation from our typecheck.
@@ -280,7 +282,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Adopt PR stack",
       description:
-        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land may only be false; auto_review and auto_patch set per-stack policy, and null clears their overrides. Omitted policy keys follow the account settings. Never changes account settings. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership.",
+        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land is boolean; auto_review and auto_patch accept true, false, or null, where null clears the override. Omitted auto_land seeds from auto_land_default; omitted auto_review and auto_patch overrides are not seeded. Never changes account settings. Adoption requires a Cyclone GitHub App install; without it the API returns cyclone_not_connected — do not retry, tell the human. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership.",
       inputSchema: stackAdoptSchema,
     },
     async (args) => {
@@ -356,11 +358,30 @@ export function createMergestormMcpServer(): McpServer {
   );
 
   addTool(
+    "stack_wait",
+    {
+      title: "Wait for stack attention",
+      description:
+        "Wait for a stack to need attention. Returns a mergestorm.stack_watch/v1 envelope; timeout_s: 0 returns one snapshot and timeout_s: 1-45 waits up to that many seconds, returning the current status (waiting or in_progress) if a snapshot was read and no attention is found. A timeout with either of those statuses is not a failure. A timeout of failed means no assessment was produced. This tool is read-only.",
+      inputSchema: stackWaitSchema,
+    },
+    async (args, extra) => {
+      try {
+        const payload = await stackWait(args, undefined, { signal: extra.signal });
+        // Preserve the versioned envelope, including nullable cursor fields.
+        return { ...ok(payload), structuredContent: payload.data };
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  addTool(
     "queue_status",
     {
       title: "Get merge queue status",
       description:
-        "List live merge queue entries for the current user, optionally filtered by stack. This tool is read-only.",
+        "List live merge queue entries (position >= 1) plus the newest bounced entries (position 0) with bounceDetail for the current user, optionally filtered by stack. This tool is read-only.",
       inputSchema: {
         stack_id: z.string().min(1).optional(),
       },
@@ -395,10 +416,19 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Update settings",
       description:
-        "Update writable Bearer /api/v1/settings toggles and return the stored result. At least one key is required. cyclone_connected and github_connected are read-only and cannot be set.",
-      inputSchema: Object.fromEntries(
-        SETTINGS_WRITABLE_KEYS.map((key) => [key, z.boolean().optional()]),
-      ),
+        "Update writable Bearer /api/v1/settings values and return the stored result. At least one key is required. cyclone_connected and github_connected are read-only and cannot be set.",
+      inputSchema: {
+        ...Object.fromEntries(
+          BEARER_SETTINGS.map((row) => [row.key,
+            ("kind" in row
+              ? row.kind === "logins" ? z.array(z.string()) : z.enum(row.values)
+              : z.boolean()).optional(),
+          ]),
+        ),
+        // Preserve these args so the handler rejects them even alongside a writable key.
+        cyclone_connected: z.unknown().optional(),
+        github_connected: z.unknown().optional(),
+      },
     },
     async (args) => {
       try {
