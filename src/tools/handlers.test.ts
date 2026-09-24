@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { CommandError, REVIEW_JOB_ENVELOPE_SCHEMA } from "mergestorm/client";
+import { CommandError, REVIEW_JOB_ENVELOPE_SCHEMA, stackBlockers, type MergeQueueEntryDto, type StackDto } from "mergestorm/client";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMergestormMcpServer } from "../server.js";
@@ -59,7 +59,7 @@ function mockFetch(
   originalFetch ??= globalThis.fetch;
   globalThis.fetch = async (input) =>
     new Response(JSON.stringify(
-      String(input).endsWith("/stacks/queue") && status === 200 && body && typeof body === "object" && "stacks" in body
+      String(input).includes("/stacks/queue") && status === 200 && body && typeof body === "object" && "stacks" in body
         ? { entries: [] }
         : body,
     ), {
@@ -201,7 +201,7 @@ test("stack list and status surface queue API failures", async () => {
   };
   globalThis.fetch = async (input) => {
     const url = String(input);
-    if (url.endsWith("/stacks/queue")) return Response.json({ error: "queue_failed" }, { status: 503 });
+    if (url.includes("/stacks/queue")) return Response.json({ error: "queue_failed" }, { status: 503 });
     return Response.json({ stacks: [stack] });
   };
 
@@ -266,6 +266,75 @@ test("stack_status returns one enriched owned stack", async () => {
   const stack = result.data.stack as { id: string; layers: Array<{ checks: unknown }> };
   assert.equal(stack.id, "stack-9");
   assert.deepEqual(stack.layers[0]?.checks, { total: 2, success: 2 });
+});
+
+test("stack_status reads only its own stack queue and returns the wait loop blockers", async () => {
+  originalFetch ??= globalThis.fetch;
+  const head = "a".repeat(40);
+  const stack = {
+    id: "stack-9",
+    owner: "acme",
+    repo: "widgets",
+    layers: [
+      { prNumber: 7, position: 0, branch: "feature", parentBranch: "main", state: "clean", ciStatus: "success", headSha: head },
+      { prNumber: 8, position: 1, branch: "child", parentBranch: "feature", state: "clean", ciStatus: "failure", headSha: "b".repeat(40) },
+    ],
+  };
+  const bounced = {
+    id: "bounce-1", stackId: "stack-9", owner: "acme", repo: "widgets", state: "bounced", position: 0,
+    bounceReason: "ci_failure", bounceDetail: { kind: "ci_failure", headSha: head, prNumber: 7, failingCheck: "lint" },
+    finishedAt: "2026-09-01T00:00:00Z",
+  };
+  const urls: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.includes("/stacks/queue")) {
+      return Response.json({
+        entries: url.includes("?stackId=stack-9")
+          ? [bounced]
+          : Array.from({ length: 10 }, (_, index) => ({ ...bounced, id: `other-${index}`, stackId: "other-stack" })),
+      });
+    }
+    return Response.json({ stacks: [stack] });
+  };
+  const result = await stackStatus("stack-9", cfg);
+  assert.deepEqual(urls.filter((url) => url.includes("/stacks/queue")), [
+    "https://api.example.test/api/v1/stacks/queue?stackId=stack-9",
+  ]);
+  const expected = stackBlockers(stack as unknown as StackDto, [bounced as unknown as MergeQueueEntryDto]);
+  assert.deepEqual(result.data, {
+    stack,
+    attention: expected.attention,
+    issues: expected.issues,
+    currentCandidate: expected.currentCandidate,
+  });
+  assert.equal(result.data.attention && (result.data.attention as { blocker: string }).blocker, "CI failed — lint");
+  assert.deepEqual(result.data.issues, [{ prNumber: 8, headSha: "b".repeat(40), blocker: "CI failed", bounceKind: null }]);
+  assert.deepEqual(result.data.currentCandidate, { prNumber: 7, headSha: head });
+  assert.match(result.summary, /blocked: #7 CI failed — lint · issues: #8 CI failed$/);
+});
+
+test("stack_status maps a queue 429 to rate_limited with retry_after_seconds", async () => {
+  originalFetch ??= globalThis.fetch;
+  globalThis.fetch = async (input) => String(input).includes("/stacks/queue")
+    ? new Response("{}", { status: 429, headers: { "Content-Type": "application/json", "Retry-After": "17" } })
+    : Response.json({ stacks: [{ id: "stack-9", owner: "acme", repo: "widgets", layers: [] }] });
+  const result = await stackStatus("stack-9", cfg);
+  assert.equal(result.isError, true);
+  const error = result.data.error as { code: string; retry_after_seconds: number };
+  assert.equal(error.code, "rate_limited");
+  assert.equal(error.retry_after_seconds, 17);
+});
+
+test("stack_status matches the stack id case-insensitively like stack_wait", async () => {
+  const id = "123e4567-e89b-12d3-a456-426614174000";
+  mockFetch(200, { stacks: [{ id, owner: "acme", repo: "widgets", layers: [{ state: "clean" }] }] });
+  const result = await stackStatus(id.toUpperCase(), cfg);
+  assert.equal(result.isError, undefined);
+  assert.equal((result.data.stack as { id: string }).id, id);
+  assert.equal(result.data.attention, null);
+  assert.deepEqual(result.data.issues, []);
 });
 
 test("stack_set PATCHes Auto land on the owned stack", async () => {
@@ -948,7 +1017,7 @@ for (const scenario of ["current", "new head", "requeued", "different PR", "clos
       finishedAt: "2026-09-19T01:00:00Z", bounceDetail: { kind: "head_moved" } });
     originalFetch ??= globalThis.fetch;
     globalThis.fetch = async (input) => Response.json(
-      String(input).endsWith("/stacks/queue") ? { entries } : { stacks: [stack] },
+      String(input).includes("/stacks/queue?stackId=bounced-stack") ? { entries } : { stacks: [stack] },
     );
     const result = await stackStatus(stack.id, cfg);
     if (scenario === "current") assert.match(result.summary, /blocked: #7 CI failed — unit tests$/);
@@ -994,7 +1063,7 @@ test("stack_status never lets a recoverable bounce suppress current-head project
   };
   originalFetch ??= globalThis.fetch;
   globalThis.fetch = async (input) => Response.json(
-    String(input).endsWith("/stacks/queue")
+    String(input).includes("/stacks/queue?stackId=")
       ? { entries: [{ stackId: stack.id, state: "bounced", finishedAt: "2026-09-19T00:00:00Z",
           bounceDetail: { kind: "head_moved", prNumber: 7, headSha: "a".repeat(40) } }] }
       : { stacks: [stack] },

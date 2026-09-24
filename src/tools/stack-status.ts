@@ -2,6 +2,7 @@ import {
   getEnrichedStack,
   listMergeQueueEntries,
   isCommandErrorCode,
+  stackBlockers,
   type Config,
   type MergeQueueEntryDto,
 } from "mergestorm/client";
@@ -25,10 +26,11 @@ export async function stackStatus(stackId: string, cfg?: Config): Promise<ToolPa
         isError: true,
       };
     }
-    const entries: MergeQueueEntryDto[] = await listMergeQueueEntries(cfg);
+    const entries: MergeQueueEntryDto[] = await listMergeQueueEntries(cfg, { stackId: stack.id });
+    const { attention, issues, currentCandidate } = stackBlockers(stack, entries);
     return {
       summary: stackSummary(stack, entries),
-      data: { stack },
+      data: { stack, attention, issues, currentCandidate },
     };
   } catch (err) {
     if (isCommandErrorCode(err, "rate_limited")) {

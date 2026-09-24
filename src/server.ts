@@ -21,7 +21,7 @@ import { whoami } from "./tools/whoami.js";
 import { MCP_PR_LOOP_INSTRUCTIONS, MCP_STACK_WATCH_INSTRUCTIONS } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.1.7";
+export const MCP_SERVER_VERSION = "0.1.8";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -343,7 +343,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Get stack status",
       description:
-        "Fetch one owned Mergestorm stack with enriched checks and agent state. This tool is read-only.",
+        "Fetch one owned Mergestorm stack with enriched checks and agent state, plus attention, issues, and currentCandidate from the same blocker rules as stack_wait, read against that stack's own merge queue. This tool is read-only.",
       inputSchema: {
         stack_id: z.string().min(1),
       },
