@@ -15,6 +15,14 @@ export const MCP_PR_LOOP_INSTRUCTIONS = [
   "- Do not prefix that comment with cyclone-outcome: (reserved).",
 ].join("\n");
 
+export const MCP_STACK_BASE_INSTRUCTIONS = [
+  "Stack PR bases (Mergestorm sets these; leave them):",
+  "- Stack of 2+ PRs: after adopt (stack_adopt, mg stack adopt, or mg stack submit) the bottom PR's GitHub base is the owned trunk mg-stack-<n>, not main. That is correct. Layer 2 is based on layer 1; layer 3+ on the mg-park-* freeze; the git parent of layer 2+ is still the layer below. A 1-PR stack stays on main and gets no mg-stack-<n>.",
+  "- Never retarget a stack PR's GitHub base (gh pr edit --base, a REST base change, or the UI). Moving the bottom to main makes Mergestorm abandon the stack's review unit; setting mg-stack-<n> again does not restore it. If a base was already moved, stop and tell the human; do not run stack land or re-adopt to repair it.",
+  "- mg-stack-<n> is the bottom PR's live parent: merging it into the bottom branch is that PR's conflict repair (bounce-watch rules). Never push to mg-stack-<n>, and never rebase or merge layer 2+ onto it or onto main. mg-park-* is never a merge or rebase target.",
+  "- mg stack submit prints the base each PR opened with; the bottom moves to mg-stack-<n> right after. stack_status trunkBranch is the current trunk.",
+].join("\n");
+
 /** Stack-watch contract facts; patch workflow policy belongs in the skill. */
 export const MCP_STACK_WATCH_INSTRUCTIONS = [
   "Stack-watch facts (mergestorm.stack_watch/v1):",

@@ -46,6 +46,8 @@ test("stdio initialize lists stack_wait and queue_status as read-only", { timeou
     assert.match(client.getInstructions() ?? "", /waiting with nonempty issues\[\] is not idle/);
     assert.match(client.getInstructions() ?? "", /never merge or rebase onto mg-park-\*/);
     assert.match(client.getInstructions() ?? "", /Attention is not a mutation/);
+    assert.match(client.getInstructions() ?? "", /mg-stack-<n>/);
+    assert.match(client.getInstructions() ?? "", /Never retarget a stack PR's GitHub base/);
     const listed = await client.listTools(undefined, { timeout: 10_000 });
     assert.deepEqual(
       listed.tools.map((tool) => tool.name).sort(),
