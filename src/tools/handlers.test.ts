@@ -607,6 +607,7 @@ const settingsBody = {
   cyclone_patch_unverified_languages: false,
   vortex_seam_specialist_enabled: true,
   auto_land_default: false,
+  auto_land_settle_seconds: 60,
   cyclone_connected: true,
   github_connected: true,
 };
@@ -955,6 +956,55 @@ for (const patch of [
 test("settings_set rejects wrong list and enum types", async () => {
   for (const patch of [{ ignored_bot_logins: "renovate" }, { ignored_bot_logins: [4] }, { vortex_findings_check: "none" }, { vortex_bot_skip_check: true }]) {
     await assert.rejects(() => settingsSet(patch, cfg), (e: unknown) => e instanceof CommandError && e.code === "usage");
+  }
+});
+
+test("settings_set PATCHes auto_land_settle_seconds and rejects values outside 15 through 300", async () => {
+  originalFetch ??= globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (_input, init) => {
+    calls++;
+    assert.deepEqual(JSON.parse(String(init?.body)), { auto_land_settle_seconds: 30 });
+    return Response.json({ ...settingsBody, auto_land_settle_seconds: 30 });
+  };
+  const result = await settingsSet({ auto_land_settle_seconds: 30 }, cfg);
+  assert.equal(result.data.auto_land_settle_seconds, 30);
+  for (const value of [14, 301, 30.5, "30", true]) {
+    await assert.rejects(
+      () => settingsSet({ auto_land_settle_seconds: value }, cfg),
+      (e: unknown) => e instanceof CommandError && e.code === "usage" && /15 through 300/.test(e.message),
+    );
+  }
+  assert.equal(calls, 1);
+});
+
+test("MCP settings_set schema accepts auto_land_settle_seconds over transport and bounds it", async () => {
+  originalApiKey = process.env.MERGESTORM_API_KEY;
+  process.env.MERGESTORM_API_KEY = cfg.apiKey;
+  originalFetch ??= globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (_input, init) => {
+    calls++;
+    assert.deepEqual(JSON.parse(String(init?.body)), { auto_land_settle_seconds: 30 });
+    return Response.json({ ...settingsBody, auto_land_settle_seconds: 30 });
+  };
+  const server = createMergestormMcpServer();
+  const client = new Client({ name: "settings-settle-test", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await client.callTool({ name: "settings_set", arguments: { auto_land_settle_seconds: 30 } });
+    assert.ok(!result.isError);
+    assert.equal((result.structuredContent as Record<string, unknown>).auto_land_settle_seconds, 30);
+    for (const value of [14, 301]) {
+      const rejected = await client.callTool({ name: "settings_set", arguments: { auto_land_settle_seconds: value } });
+      assert.equal(rejected.isError, true);
+    }
+    assert.equal(calls, 1);
+  } finally {
+    await client.close();
+    await server.close();
   }
 });
 

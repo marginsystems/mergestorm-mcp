@@ -25,7 +25,7 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.1.9";
+export const MCP_SERVER_VERSION = "0.1.10";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -366,7 +366,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Wait for stack attention",
       description:
-        "Wait for a stack to need attention. Returns a mergestorm.stack_watch/v1 envelope; timeout_s: 0 returns one snapshot and timeout_s: 1-45 waits up to that many seconds, returning the current status (waiting or in_progress) if a snapshot was read and no attention is found. A timeout with either of those statuses is not a failure. A timeout of failed means no assessment was produced. This tool is read-only. Attention never calls for changing a PR's GitHub base.",
+        "Wait for a stack to need attention. Returns a mergestorm.stack_watch/v1 envelope; timeout_s: 0 returns one snapshot and timeout_s: 1-45 waits up to that many seconds, returning the current status (waiting or in_progress) if a snapshot was read and no attention is found. A timeout with either of those statuses is not a failure; waiting and in_progress end this slice, and the next call is stack_wait again with the same cursor. A timeout of failed means no assessment was produced. This tool is read-only. Attention never calls for changing a PR's GitHub base.",
       inputSchema: stackWaitSchema,
     },
     async (args, extra) => {
@@ -404,7 +404,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Get settings",
       description:
-        "Read the Bearer /api/v1/settings toggles, including auto_patch_enabled and cyclone_connected. This tool is read-only.",
+        "Read the Bearer /api/v1/settings toggles, including auto_patch_enabled, auto_land_settle_seconds (how long Auto land waits before queueing), and cyclone_connected. This tool is read-only.",
     },
     async () => {
       try {
@@ -420,12 +420,16 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Update settings",
       description:
-        "Update writable Bearer /api/v1/settings values and return the stored result. At least one key is required. cyclone_connected and github_connected are read-only and cannot be set.",
+        "Update writable Bearer /api/v1/settings values and return the stored result. At least one key is required. auto_land_settle_seconds is a whole number of seconds from 15 through 300; it applies to settle clocks that start after the write. cyclone_connected and github_connected are read-only and cannot be set.",
       inputSchema: {
         ...Object.fromEntries(
           BEARER_SETTINGS.map((row) => [row.key,
             ("kind" in row
-              ? row.kind === "logins" ? z.array(z.string()) : z.enum(row.values)
+              ? row.kind === "logins"
+                ? z.array(z.string())
+                : row.kind === "seconds"
+                  ? z.number().int().min(row.min).max(row.max)
+                  : z.enum(row.values)
               : z.boolean()).optional(),
           ]),
         ),

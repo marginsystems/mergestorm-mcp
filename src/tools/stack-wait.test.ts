@@ -44,8 +44,29 @@ test("stack_wait timeout returns waiting, preserving the last cursor", async () 
     pollStackWatch: async () => { throw new StackWatchTimeoutError(last); },
   });
   assert.deepEqual(result.data, last);
-  assert.equal(result.summary, "Stack stack-1 · waiting");
+  assert.equal(
+    result.summary,
+    "Stack stack-1 · waiting · watch not finished: call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha \"old-head\"",
+  );
   assert.notEqual(result.isError, true);
+});
+
+test("stack_wait in_progress summary keeps blockers and prints explicit null selectors", async () => {
+  const result = await stackWait({ stack_id: "stack-1", timeout_s: 0 }, {}, {
+    pollStackWatch: async () => ({
+      ...envelope,
+      status: "in_progress",
+      assessment: "unavailable",
+      blocker: null,
+      prNumber: null,
+      issues: [{ prNumber: 13, headSha: null, blocker: "CI failed", bounceKind: null }],
+      cursor: { stackId: "stack-1", enrolledHeadSha: null, afterFinishedAt: null, bounceId: "bounce-1" },
+    }),
+  });
+  assert.equal(
+    result.summary,
+    "Stack stack-1 · in_progress · issues: #13 CI failed · assessment unavailable · watch not finished: call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha null, after_finished_at null, bounce_id \"bounce-1\"",
+  );
 });
 
 test("stack_wait summary includes issues and unavailable assessment", async () => {

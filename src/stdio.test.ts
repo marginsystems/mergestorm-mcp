@@ -75,6 +75,7 @@ test("stdio initialize lists stack_wait and queue_status as read-only", { timeou
     assert.match(stackWait.description ?? "", /waiting or in_progress/);
     assert.match(stackWait.description ?? "", /timeout_s: 1-45/);
     assert.match(stackWait.description ?? "", /A timeout with either of those statuses is not a failure/);
+    assert.match(stackWait.description ?? "", /waiting and in_progress end this slice, and the next call is stack_wait again with the same cursor/);
     assert.match(stackWait.description ?? "", /A timeout of failed means no assessment was produced/);
     assert.deepEqual(stackWait.inputSchema.required, ["stack_id"]);
     assert.deepEqual(Object.keys(stackWait.inputSchema.properties ?? {}).sort(),

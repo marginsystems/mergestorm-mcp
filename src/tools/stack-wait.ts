@@ -27,6 +27,18 @@ export type StackWaitInput = {
   bounce_id?: string | null;
 };
 
+function stackWaitSummary(envelope: StackWatchEnvelope): string {
+  const base = `Stack ${envelope.stackId} · ${envelope.status}${stackBlockersSummary(envelope.blocker && envelope.prNumber != null ? { prNumber: envelope.prNumber, blocker: envelope.blocker } : null, envelope.issues)}${envelope.assessment === "unavailable" ? " · assessment unavailable" : ""}`;
+  if (envelope.status !== "waiting" && envelope.status !== "in_progress") return base;
+  const selectors = [
+    `stack_id ${JSON.stringify(envelope.cursor.stackId)}`,
+    `enrolled_head_sha ${JSON.stringify(envelope.cursor.enrolledHeadSha)}`,
+    ...(envelope.cursor.afterFinishedAt !== undefined ? [`after_finished_at ${JSON.stringify(envelope.cursor.afterFinishedAt)}`] : []),
+    ...(envelope.cursor.bounceId !== undefined ? [`bounce_id ${JSON.stringify(envelope.cursor.bounceId)}`] : []),
+  ];
+  return `${base} · watch not finished: call stack_wait again with timeout_s 45 and the same cursor: ${selectors.join(", ")}`;
+}
+
 export async function stackWait(
   input: StackWaitInput,
   cfg?: Config,
@@ -52,7 +64,7 @@ export async function stackWait(
   } catch (err) {
     if (err instanceof StackWatchError) {
       return {
-        summary: `Stack ${err.lastEnvelope.stackId} · ${err.lastEnvelope.status}${stackBlockersSummary(err.lastEnvelope.blocker && err.lastEnvelope.prNumber != null ? { prNumber: err.lastEnvelope.prNumber, blocker: err.lastEnvelope.blocker } : null, err.lastEnvelope.issues)}${err.lastEnvelope.assessment === "unavailable" ? " · assessment unavailable" : ""}`,
+        summary: stackWaitSummary(err.lastEnvelope),
         data: {
           ...err.lastEnvelope,
           ...(err.retryAfterSeconds !== undefined ? { retry_after_seconds: err.retryAfterSeconds } : {}),
@@ -64,7 +76,7 @@ export async function stackWait(
     envelope = err.lastEnvelope;
   }
   return {
-    summary: `Stack ${envelope.stackId} · ${envelope.status}${stackBlockersSummary(envelope.blocker && envelope.prNumber != null ? { prNumber: envelope.prNumber, blocker: envelope.blocker } : null, envelope.issues)}${envelope.assessment === "unavailable" ? " · assessment unavailable" : ""}`,
+    summary: stackWaitSummary(envelope),
     data: envelope,
   };
 }

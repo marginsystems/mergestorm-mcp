@@ -33,6 +33,22 @@ export function settingsPatchFromArgs(
     const value = args[key];
     if (value === undefined) continue;
     const row = BEARER_SETTINGS.find((row) => row.key === key)!;
+    if ("kind" in row && row.kind === "seconds") {
+      if (
+        typeof value !== "number" ||
+        !Number.isInteger(value) ||
+        value < row.min ||
+        value > row.max
+      ) {
+        throw new CommandError(
+          `${key} takes a whole number of seconds from ${row.min} through ${row.max}.`,
+          2,
+          "usage",
+        );
+      }
+      Object.assign(patch, { [key]: value });
+      continue;
+    }
     if ("kind" in row) {
       const valid = row.kind === "logins"
         ? Array.isArray(value) && value.every((login) => typeof login === "string")
