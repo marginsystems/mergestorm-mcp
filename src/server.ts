@@ -1,10 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { CommandError, BEARER_SETTINGS } from "mergestorm/client";
+import { MCP_SERVER_ICONS, MCP_WEBSITE_URL } from "./brand-icons.js";
 import { credits } from "./tools/credits.js";
 import { queueStatus } from "./tools/queue-status.js";
-import { reviewGetPr } from "./tools/review-get-pr.js";
-import { reviewGet } from "./tools/review-get.js";
 import { reviewList } from "./tools/review-list.js";
 import { reviewSubmit } from "./tools/review-submit.js";
 import { reviewWaitPr } from "./tools/review-wait-pr.js";
@@ -25,14 +25,12 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.1.10";
+export const MCP_SERVER_VERSION = "0.2.0";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
   "credits",
   "review_list",
-  "review_get",
-  "review_get_pr",
   "review_submit",
   "review_wait",
   "review_wait_pr",
@@ -87,7 +85,10 @@ export function createMergestormMcpServer(): McpServer {
   const server = new McpServer(
     {
       name: MCP_SERVER_NAME,
+      title: "Mergestorm",
       version: MCP_SERVER_VERSION,
+      websiteUrl: MCP_WEBSITE_URL,
+      icons: MCP_SERVER_ICONS,
     },
     { instructions: `${MCP_PR_LOOP_INSTRUCTIONS}\n\n${MCP_STACK_BASE_INSTRUCTIONS}\n\n${MCP_STACK_WATCH_INSTRUCTIONS}` },
   );
@@ -95,7 +96,12 @@ export function createMergestormMcpServer(): McpServer {
   // runtime registerTool, drop the instantiation from our typecheck.
   const addTool = server.registerTool.bind(server) as (
     name: string,
-    config: { title?: string; description?: string; inputSchema?: Record<string, unknown> },
+    config: {
+      title?: string;
+      description?: string;
+      inputSchema?: Record<string, unknown>;
+      annotations?: ToolAnnotations;
+    },
     cb: (...args: any[]) => unknown,
   ) => void;
 
@@ -104,6 +110,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Who am I",
       description: "Current Mergestorm API key prefix, plan, and API base.",
+      annotations: { readOnlyHint: true },
     },
     async () => {
       try {
@@ -119,6 +126,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Credits",
       description: "Current standard-credit usage and reset time.",
+      annotations: { readOnlyHint: true },
     },
     async () => {
       try {
@@ -137,59 +145,11 @@ export function createMergestormMcpServer(): McpServer {
       inputSchema: {
         limit: z.number().int().min(1).max(50).optional(),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ limit }) => {
       try {
         return ok(await reviewList(limit));
-      } catch (err) {
-        return fail(err);
-      }
-    },
-  );
-
-  addTool(
-    "review_get",
-    {
-      title: "Get review",
-      description:
-        "Fetch one Mergestorm review job as a job envelope. On rate_limited, wait retry_after_seconds before trying again.",
-      inputSchema: {
-        job_id: z.string().min(1),
-      },
-    },
-    async ({ job_id }) => {
-      try {
-        return ok(await reviewGet(job_id));
-      } catch (err) {
-        return fail(err);
-      }
-    },
-  );
-
-  addTool(
-    "review_get_pr",
-    {
-      title: "Get GitHub PR Vortex review",
-      description:
-        "Fetch the latest GitHub PR Vortex pass from the DB-only endpoint. Review identity is SHA + pass: the envelope carries pass (1 for the first review on a head; a re-review on the same head is the next pass). Pass after_sha to scope to a head, pass to read one exact attempt, or after_pass to read only a later attempt on that head. This tool is read-only. On rate_limited, wait retry_after_seconds before trying again. Verify each finding against the current code; prefer the smallest correct patch; a chat-only skip is not a dismiss (post a PR comment starting with mergestorm-loop: dismiss).",
-      inputSchema: {
-        owner: z.string().min(1),
-        repo: z.string().min(1),
-        pr_number: z.number().int().min(1),
-        after_sha: z.string().optional(),
-        pass: z.number().int().min(1).optional(),
-        after_pass: z.number().int().min(1).optional(),
-      },
-    },
-    async ({ owner, repo, pr_number, after_sha, pass, after_pass }) => {
-      try {
-        return ok(
-          await reviewGetPr(owner, repo, pr_number, undefined, {
-            afterSha: after_sha,
-            pass,
-            afterPass: after_pass,
-          }),
-        );
       } catch (err) {
         return fail(err);
       }
@@ -216,6 +176,7 @@ export function createMergestormMcpServer(): McpServer {
         wait: z.boolean().optional(),
         timeout_s: z.number().positive().max(300).optional(),
       },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
       try {
@@ -231,11 +192,12 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Wait for review",
       description:
-        "Poll one Mergestorm review job for one 45s slice by default (max 300s). On timeout, returns in_progress; call again with the same job_id until done. Do not pass 300; hosts drop long MCP calls. On rate_limited, wait retry_after_seconds before trying again.",
+        "Read one local Mergestorm review job by the job_id that review_submit returned, as a job envelope. timeout_s: 0 reads it once without polling; otherwise it polls for one 45s slice by default (max 300s). On timeout, returns in_progress; call again with the same job_id until done. Do not pass 300; hosts drop long MCP calls. On rate_limited, wait retry_after_seconds before trying again.",
       inputSchema: {
         job_id: z.string().min(1),
-        timeout_s: z.number().positive().max(300).optional(),
+        timeout_s: z.number().min(0).max(300).optional(),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ job_id, timeout_s }) => {
       try {
@@ -251,7 +213,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Wait for GitHub PR Vortex review",
       description:
-        "Poll the DB-only GitHub PR Vortex pass for up to 45s (pass timeout_s to override, max 300). Review identity is SHA + pass. Pass after_sha for the head you pushed. When you already hold an envelope for that same head, also pass after_pass set to its pass so the wait cannot return that attempt again; keep after_pass unchanged across timeout retries and never replace it with the pass of an in-progress envelope. Omit after_pass for a head you have no envelope for (its first pass is 1). This tool is read-only. On timeout, returns in_progress so you can call again. Do not pass 300; hosts drop long MCP calls. On rate_limited, wait retry_after_seconds before trying again. After a resting pass, verify each finding; prefer the smallest correct patch; if you skip, post a PR comment starting with mergestorm-loop: dismiss.",
+        "Read the Vortex pass on a GitHub PR from the DB-only endpoint; review identity is head SHA + pass. timeout_s: 0 reads it once without polling; otherwise it polls for one 45s slice by default (max 300) and returns in_progress on timeout so you can call again. Pass after_sha for the head you pushed and pass to read one exact attempt; when you already hold a resting envelope for that head, also pass after_pass set to its pass and keep it unchanged across retries; never replace it with the pass of an in-progress envelope, and omit after_pass for a head you hold no envelope for. With timeout_s: 0, a pass that does not exist yet returns not_found, so after a push use a positive timeout. Do not pass 300; hosts drop long MCP calls. On rate_limited, wait retry_after_seconds before trying again. After a resting pass, verify each finding; prefer the smallest correct patch; if you skip, post a PR comment starting with mergestorm-loop: dismiss.",
       inputSchema: {
         owner: z.string().min(1),
         repo: z.string().min(1),
@@ -259,8 +221,9 @@ export function createMergestormMcpServer(): McpServer {
         after_sha: z.string().optional(),
         pass: z.number().int().min(1).optional(),
         after_pass: z.number().int().min(1).optional(),
-        timeout_s: z.number().positive().max(300).optional(),
+        timeout_s: z.number().min(0).max(300).optional(),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ owner, repo, pr_number, after_sha, pass, after_pass, timeout_s }) => {
       try {
@@ -288,6 +251,7 @@ export function createMergestormMcpServer(): McpServer {
       description:
         "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land is boolean; auto_review and auto_patch accept true, false, or null, where null clears the override. Omitted auto_land seeds from auto_land_default; omitted auto_review and auto_patch overrides are not seeded. Never changes account settings. Adoption requires a Cyclone GitHub App install; without it the API returns cyclone_not_connected — do not retry, tell the human. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership. With 2+ PRs, adopt moves the bottom PR's GitHub base to mg-stack-<n> and parks PR3+ on an mg-park-* freeze; a 1-PR stack stays on main. Leave those bases. Never retarget the bottom back to main.",
       inputSchema: stackAdoptSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
     async (args) => {
       try {
@@ -303,7 +267,8 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "List stacks",
       description:
-        "List the current user's Mergestorm stacks. This tool is read-only.",
+        "List the current user's Mergestorm stacks.",
+      annotations: { readOnlyHint: true },
     },
     async () => {
       try {
@@ -326,6 +291,7 @@ export function createMergestormMcpServer(): McpServer {
         auto_review: z.boolean().nullable().optional(),
         auto_patch: z.boolean().nullable().optional(),
       },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async ({ stack_id, auto_land, auto_review, auto_patch }) => {
       try {
@@ -347,10 +313,11 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Get stack status",
       description:
-        "Fetch one owned Mergestorm stack with enriched checks and agent state, plus attention, issues, and currentCandidate from the same blocker rules as stack_wait, read against that stack's own merge queue. This tool is read-only. trunkBranch is mg-stack-<n> for an adopted 2+ PR stack and matches the bottom open PR's GitHub base; an mg-park-* parentBranch is a freeze. Neither is drift to fix.",
+        "Fetch one owned Mergestorm stack with enriched checks and agent state, plus attention, issues, and currentCandidate from the same blocker rules as stack_wait, read against that stack's own merge queue. trunkBranch is mg-stack-<n> for an adopted 2+ PR stack and matches the bottom open PR's GitHub base; an mg-park-* parentBranch is a freeze. Neither is drift to fix.",
       inputSchema: {
         stack_id: z.string().min(1),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ stack_id }) => {
       try {
@@ -366,8 +333,9 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Wait for stack attention",
       description:
-        "Wait for a stack to need attention. Returns a mergestorm.stack_watch/v1 envelope; timeout_s: 0 returns one snapshot and timeout_s: 1-45 waits up to that many seconds, returning the current status (waiting or in_progress) if a snapshot was read and no attention is found. A timeout with either of those statuses is not a failure; waiting and in_progress end this slice, and the next call is stack_wait again with the same cursor. A timeout of failed means no assessment was produced. This tool is read-only. Attention never calls for changing a PR's GitHub base.",
+        "Wait for a stack to need attention. Returns a mergestorm.stack_watch/v1 envelope; timeout_s: 0 returns one snapshot and timeout_s: 1-45 waits up to that many seconds, returning the current status (waiting or in_progress) if a snapshot was read and no attention is found. A timeout with either of those statuses is not a failure; waiting and in_progress end this slice, and the next call is stack_wait again with the same cursor. A timeout of failed means no assessment was produced. While Cyclone or Vortex is still working on the blocked PR it returns in_progress, not attention, with busy[] naming the PR, blocker, and agent; agents carries that PR's vortexStatus, cycloneStatus, vortexReview, and busy flags. Attention never calls for changing a PR's GitHub base.",
       inputSchema: stackWaitSchema,
+      annotations: { readOnlyHint: true },
     },
     async (args, extra) => {
       try {
@@ -385,10 +353,11 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Get merge queue status",
       description:
-        "List live merge queue entries (position >= 1) plus the newest bounced entries (position 0) with bounceDetail for the current user, optionally filtered by stack. This tool is read-only.",
+        "List live merge queue entries (position >= 1) plus the newest bounced entries (position 0) with bounceDetail for the current user, optionally filtered by stack.",
       inputSchema: {
         stack_id: z.string().min(1).optional(),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ stack_id }) => {
       try {
@@ -404,7 +373,8 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Get settings",
       description:
-        "Read the Bearer /api/v1/settings toggles, including auto_patch_enabled, auto_land_settle_seconds (how long Auto land waits before queueing), and cyclone_connected. This tool is read-only.",
+        "Read the Bearer /api/v1/settings toggles, including auto_patch_enabled, auto_land_settle_seconds (how long Auto land waits before queueing), and cyclone_connected.",
+      annotations: { readOnlyHint: true },
     },
     async () => {
       try {
@@ -437,6 +407,7 @@ export function createMergestormMcpServer(): McpServer {
         cyclone_connected: z.unknown().optional(),
         github_connected: z.unknown().optional(),
       },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async (args) => {
       try {

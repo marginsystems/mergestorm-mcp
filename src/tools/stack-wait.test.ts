@@ -4,7 +4,7 @@ import { StackWatchError, StackWatchTimeoutError, type StackWatchEnvelope } from
 import { stackWait } from "./stack-wait.js";
 
 const envelope: StackWatchEnvelope = {
-  issues: [], currentCandidate: null, assessment: "available",
+  issues: [], currentCandidate: null, assessment: "available", busy: [], agents: null,
   schema: "mergestorm.stack_watch/v1", status: "attention", stackId: "stack-1",
   blocker: "Conflict", bounceKind: null, prNumber: 12, headSha: "new-head",
   cursor: { stackId: "stack-1", enrolledHeadSha: "old-head" },
@@ -129,4 +129,20 @@ test("stack_wait only reads stack and queue snapshots", async (t) => {
   assert.equal(queueUrls[1]?.searchParams.get("wait"), "1");
   assert.equal(result.data.status, "waiting");
   assert.deepEqual(result.data.cursor, { stackId: "stack-1", enrolledHeadSha: "old-head", afterFinishedAt: "original" });
+});
+
+test("stack_wait in_progress summary names the agent holding the blocked PR", async () => {
+  const result = await stackWait({ stack_id: "stack-1", timeout_s: 0 }, {}, {
+    pollStackWatch: async () => ({
+      ...envelope,
+      status: "in_progress",
+      blocker: null,
+      busy: [
+        { prNumber: 12, headSha: "new-head", agent: "cyclone", blocker: "CI failed" },
+        { prNumber: 12, headSha: "new-head", agent: "vortex", blocker: "CI failed" },
+      ],
+    }),
+  });
+  assert.ok(result.summary.startsWith("Stack stack-1 · in_progress · held: #12 CI failed while Cyclone patches and Vortex reviews · watch not finished"));
+  assert.deepEqual((result.data as { busy: unknown[] }).busy.length, 2);
 });

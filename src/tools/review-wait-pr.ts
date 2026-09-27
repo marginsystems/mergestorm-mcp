@@ -9,6 +9,7 @@ import {
   payloadFromPrReview,
   prReviewSummary,
   prReviewTarget,
+  reviewGetPr,
 } from "./review-get-pr.js";
 import { MCP_PR_WAIT_DEFAULT_S, waitTimeoutMs } from "./review-submit.js";
 import type { ToolPayload } from "./types.js";
@@ -32,6 +33,13 @@ export async function reviewWaitPr(
 ): Promise<ToolPayload> {
   const target = prReviewTarget(owner, repo, prNumber);
   const resolved = cfg ?? (await loadConfig());
+  if (timeout_s === 0) {
+    return reviewGetPr(target.owner, target.repo, target.prNumber, resolved, {
+      afterSha,
+      pass: opts.pass,
+      afterPass: opts.afterPass,
+    });
+  }
   try {
     const envelope = await pollPrVortexReview(
       resolved,

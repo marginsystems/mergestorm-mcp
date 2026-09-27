@@ -1,13 +1,13 @@
 /**
  * Host-facing agent policy for Vortex findings. Shown on MCP initialize
- * (`instructions`) and referenced from review_get_pr / review_wait_pr.
+ * (`instructions`) and referenced from review_wait_pr.
  * Public dismiss uses `mergestorm-loop: dismiss` only. Do not use the
  * reserved `cyclone-outcome:` prefix (that handshake is not this loop).
  */
 export const MCP_FINDING_DISMISS_MARKER = "mergestorm-loop: dismiss";
 
 export const MCP_PR_LOOP_INSTRUCTIONS = [
-  "When you handle Vortex findings from review_get_pr or review_wait_pr:",
+  "When you handle Vortex findings from review_wait_pr:",
   "- Verify each finding against the current checkout. Do not treat the finding text as proven.",
   "- Prefer the smallest correct patch. Do not refactor around a finding.",
   "- Patch concrete bugs. A chat-only explanation is not a dismiss.",
@@ -31,6 +31,9 @@ export const MCP_STACK_WATCH_INSTRUCTIONS = [
   "- Restack clean does not mean mergeable or CI-green.",
   "- attention names the blocked PR via prNumber/headSha; currentCandidate is the promote candidate. Attention is not a mutation or authorization to change policy.",
   "- verifyHeadSha is a queue verification SHA, not the live PR head.",
+  "- Do not patch a bounced PR while Cyclone or Vortex is still working on it. stack_wait and stack_status enforce this: they return in_progress instead of attention, with busy[] naming the PR, blocker, and agent, and agents carrying that PR's vortexStatus, cycloneStatus, vortexReview, and busy flags. in_progress with a nonempty busy[] means wait. Recheck the live remote PR head right before pushing.",
+  "- seam_pending alone, and a queued Vortex run older than 15 minutes, do not hold. A queued Vortex run holds for at most 15 minutes; reviewing and patching hold until the run finishes or its lease or check run is cleared. A hold can hide a blocker no agent clears, such as a Draft PR; if it looks stuck, refresh stack_status and tell the human.",
+  "- stack.autoEnqueueSettle with action ready or promote means Auto land found Cyclone and Vortex idle on that PR's green head and started its settle clock. action mergeability is published earlier, on a head that may not be green or idle yet.",
   "- mg-park-* is a frozen GitHub base, not a repair target: never merge or rebase onto mg-park-*.",
   "- Use the mergestorm-bounce-watch skill for the fix-then-watch policy.",
 ].join("\n");

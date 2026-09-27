@@ -28,7 +28,7 @@ export type StackWaitInput = {
 };
 
 function stackWaitSummary(envelope: StackWatchEnvelope): string {
-  const base = `Stack ${envelope.stackId} · ${envelope.status}${stackBlockersSummary(envelope.blocker && envelope.prNumber != null ? { prNumber: envelope.prNumber, blocker: envelope.blocker } : null, envelope.issues)}${envelope.assessment === "unavailable" ? " · assessment unavailable" : ""}`;
+  const base = `Stack ${envelope.stackId} · ${envelope.status}${stackBlockersSummary(envelope.blocker && envelope.prNumber != null ? { prNumber: envelope.prNumber, blocker: envelope.blocker } : null, envelope.issues, envelope.busy)}${envelope.assessment === "unavailable" ? " · assessment unavailable" : ""}`;
   if (envelope.status !== "waiting" && envelope.status !== "in_progress") return base;
   const selectors = [
     `stack_id ${JSON.stringify(envelope.cursor.stackId)}`,

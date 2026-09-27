@@ -6,8 +6,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMergestormMcpServer } from "../server.js";
 import { credits } from "./credits.js";
 import { queueStatus } from "./queue-status.js";
-import { reviewGet } from "./review-get.js";
 import { reviewList } from "./review-list.js";
+import { reviewWait } from "./review-wait.js";
 import { settingsGet } from "./settings-get.js";
 import { settingsSet } from "./settings-set.js";
 import { stackAdopt, type StackAdoptInput } from "./stack-adopt.js";
@@ -119,7 +119,27 @@ test("review_list wraps jobs in the review envelope", async () => {
   assert.equal(items[0]?.job_id, "job_1");
 });
 
-test("review_get returns one job envelope", async () => {
+test("review_wait with timeout_s 0 reads one job envelope without polling", async () => {
+  const urls: string[] = [];
+  originalFetch ??= globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    urls.push(String(input));
+    return Response.json({
+      job_id: "job_9",
+      status: "in_progress",
+      thread_slug: "local/feat",
+    });
+  };
+  const result = await reviewWait("job_9", 0, cfg, { pollIntervalMs: 1 });
+  assert.equal(urls.length, 1);
+  assert.equal(result.summary, "job_9 · in_progress");
+  assert.equal(result.data.schema, REVIEW_JOB_ENVELOPE_SCHEMA);
+  assert.equal(result.data.job_id, "job_9");
+  assert.equal(result.data.status, "in_progress");
+  assert.equal(result.data.error ?? null, null);
+});
+
+test("review_wait with timeout_s 0 returns one completed job envelope", async () => {
   mockFetch(200, {
     job_id: "job_9",
     status: "completed",
@@ -127,20 +147,20 @@ test("review_get returns one job envelope", async () => {
     thread_slug: "local/feat",
     summary: "nits",
   });
-  const result = await reviewGet("job_9", cfg);
+  const result = await reviewWait("job_9", 0, cfg);
   assert.equal(result.summary, "job_9 · completed · request_changes");
   assert.equal(result.data.schema, REVIEW_JOB_ENVELOPE_SCHEMA);
   assert.equal(result.data.job_id, "job_9");
   assert.equal(result.data.status, "completed");
 });
 
-test("review_get returns a structured rate_limited envelope", async () => {
+test("review_wait with timeout_s 0 returns a structured rate_limited envelope", async () => {
   mockFetch(
     429,
     { error: "rate_limited", retry_after_seconds: 9 },
     { "Retry-After": "9" },
   );
-  const result = await reviewGet("job_9", cfg);
+  const result = await reviewWait("job_9", 0, cfg);
   assert.equal(result.data.schema, REVIEW_JOB_ENVELOPE_SCHEMA);
   assert.equal(result.data.job_id, "job_9");
   assert.equal(result.data.status, "rate_limited");
@@ -308,6 +328,8 @@ test("stack_status reads only its own stack queue and returns the wait loop bloc
     attention: expected.attention,
     issues: expected.issues,
     currentCandidate: expected.currentCandidate,
+    busy: expected.busy,
+    agents: expected.agents,
   });
   assert.equal(result.data.attention && (result.data.attention as { blocker: string }).blocker, "CI failed — lint");
   assert.deepEqual(result.data.issues, [{ prNumber: 8, headSha: "b".repeat(40), blocker: "CI failed", bounceKind: null }]);

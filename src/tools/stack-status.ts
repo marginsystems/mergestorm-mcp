@@ -27,10 +27,10 @@ export async function stackStatus(stackId: string, cfg?: Config): Promise<ToolPa
       };
     }
     const entries: MergeQueueEntryDto[] = await listMergeQueueEntries(cfg, { stackId: stack.id });
-    const { attention, issues, currentCandidate } = stackBlockers(stack, entries);
+    const { attention, issues, currentCandidate, busy, agents } = stackBlockers(stack, entries);
     return {
       summary: stackSummary(stack, entries),
-      data: { stack, attention, issues, currentCandidate },
+      data: { stack, attention, issues, currentCandidate, busy, agents },
     };
   } catch (err) {
     if (isCommandErrorCode(err, "rate_limited")) {

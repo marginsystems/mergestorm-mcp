@@ -1,6 +1,10 @@
 # mergestorm-mcp
 
-Stdio MCP server for Mergestorm. Tools: `whoami`, `credits`, `review_list`, `review_get`, `review_get_pr`, `review_submit`, `review_wait`, `review_wait_pr`, `stack_adopt`, `stack_list`, `stack_set`, `stack_status`, `stack_wait`, `queue_status`, `settings_get`, `settings_set`.
+Stdio MCP server for Mergestorm. Tools: `whoami`, `credits`, `review_list`, `review_submit`, `review_wait`, `review_wait_pr`, `stack_adopt`, `stack_list`, `stack_set`, `stack_status`, `stack_wait`, `queue_status`, `settings_get`, `settings_set`.
+
+Every tool declares MCP `annotations`. The reads carry `readOnlyHint: true`; `review_submit`, `stack_adopt`, `stack_set`, and `settings_set` carry `readOnlyHint: false` and `destructiveHint: false`.
+
+`review_wait({ job_id, timeout_s? })` reads a local review job by the `job_id` that `review_submit` returned. `review_wait_pr({ owner, repo, pr_number, after_sha?, pass?, after_pass?, timeout_s? })` reads the Vortex pass on a GitHub PR. Both poll one 45s slice by default; `timeout_s: 0` reads once without polling.
 
 The stack tools expose reads plus one scoped policy write:
 
@@ -8,7 +12,7 @@ The stack tools expose reads plus one scoped policy write:
 - `stack_list` returns the current API key owner's registered stacks.
 - `stack_set({ stack_id, auto_land?, auto_review?, auto_patch? })` sets per-stack policy on one owned stack. `auto_land` flips Auto land. `auto_review` and `auto_patch` pin Vortex auto-review or Cyclone auto-patch for that stack in either direction (`true` or `false`); `null` clears the pin so the stack follows the account setting. Pass at least one key. Account settings are never changed here.
 - `stack_status({ stack_id })` returns one owned stack with enriched checks and agent state, plus `attention`, `issues`, and `currentCandidate` from the same blocker rules as `stack_wait`, read against that stack's own merge queue. It returns a structured `stack_not_found` or `rate_limited` error.
-- `stack_wait({ stack_id, timeout_s?, enrolled_head_sha?, after_finished_at?, bounce_id? })` waits for a stack or queue state change and returns the latest snapshots. `timeout_s: 0` returns one snapshot; a positive timeout after a snapshot with no attention returns the current `waiting` or `in_progress` status with selectors to use for the next call. An unread deadline returns `failed`.
+- `stack_wait({ stack_id, timeout_s?, enrolled_head_sha?, after_finished_at?, bounce_id? })` waits for a stack or queue state change and returns the latest snapshots. `timeout_s: 0` returns one snapshot; a positive timeout after a snapshot with no attention returns the current `waiting` or `in_progress` status with selectors to use for the next call. An unread deadline returns `failed`. While Cyclone or Vortex is still working on the blocked PR, `stack_wait` and `stack_status` return `in_progress` instead of `attention`, with `busy[]` naming the PR, blocker, and agent, and `agents` carrying that PR's `vortexStatus`, `cycloneStatus`, `vortexReview`, and busy flags. A nonempty `busy[]` means wait. A queued Vortex run holds for at most 15 minutes, `seam_pending` alone does not hold, and reviewing or patching holds until the run finishes or its lease or check run is cleared. A hold can hide a blocker no agent clears (such as Draft); if it looks stuck, refresh `stack_status` and tell the human.
 
 Auth is `MERGESTORM_API_KEY`, then `~/.mergestorm/config.json` (same as `mg`).
 

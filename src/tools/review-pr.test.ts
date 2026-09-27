@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 import type { PrVortexReview } from "mergestorm/client";
 import { MCP_TOOL_NAMES } from "../server.js";
-import { prReviewSummary, reviewGetPr } from "./review-get-pr.js";
+import { prReviewSummary } from "./review-get-pr.js";
 import { reviewWaitPr } from "./review-wait-pr.js";
 import { MCP_PR_WAIT_DEFAULT_S, MCP_WAIT_CEILING_S, waitTimeoutMs } from "./review-submit.js";
 
@@ -67,10 +67,10 @@ function mockPrFetch(
 }
 
 describe("PR review tools", { concurrency: false }, () => {
-  test("review_get_pr fetches only the DB-only PR review route", async () => {
+  test("review_wait_pr with timeout_s 0 fetches only the DB-only PR review route", async () => {
     const urls = mockPrFetch([{ status: 200, body: review("completed") }]);
 
-    const result = await reviewGetPr("acme", "widgets", 12, cfg);
+    const result = await reviewWaitPr("acme", "widgets", 12, undefined, 0, cfg);
 
     assert.equal(urls.length, 1);
     assert.equal(
@@ -84,6 +84,55 @@ describe("PR review tools", { concurrency: false }, () => {
       result.summary,
       "acme/widgets#12 · completed · sha abc123d · 0 findings",
     );
+  });
+
+  test("review_wait_pr with timeout_s 0 makes one request and does not poll", async () => {
+    const urls = mockPrFetch([
+      { status: 200, body: review("in_progress") },
+      { status: 200, body: review("completed") },
+    ]);
+
+    const result = await reviewWaitPr(
+      "acme",
+      "widgets",
+      12,
+      "abc123def456",
+      0,
+      cfg,
+      { pollIntervalMs: 1 },
+    );
+
+    assert.equal(urls.length, 1);
+    assert.equal(new URL(urls[0]!).searchParams.get("wait"), null);
+    assert.equal(new URL(urls[0]!).searchParams.get("after_sha"), "abc123def456");
+    assert.equal(result.data.status, "in_progress");
+    assert.equal(result.data.error, undefined);
+  });
+
+  test("review_wait_pr with timeout_s 0 returns rate_limited without retrying", async () => {
+    const urls = mockPrFetch([
+      {
+        status: 429,
+        body: { error: "rate_limited", retry_after_seconds: 7 },
+        headers: { "Retry-After": "7" },
+      },
+    ]);
+
+    const result = await reviewWaitPr("acme", "widgets", 12, undefined, 0, cfg);
+
+    assert.equal(urls.length, 1);
+    assert.equal(result.data.status, "rate_limited");
+    assert.equal(result.data.retry_after_seconds, 7);
+  });
+
+  test("review_wait_pr with timeout_s 0 reports not_found for a head with no pass yet", async () => {
+    const urls = mockPrFetch([{ status: 404, body: { error: "not_found" } }]);
+
+    await assert.rejects(
+      () => reviewWaitPr("acme", "widgets", 12, "abc123def456", 0, cfg),
+      (err: unknown) => err instanceof Error && (err as { code?: string }).code === "not_found",
+    );
+    assert.equal(urls.length, 1);
   });
 
   test("review_wait_pr polls until the pass completes", async () => {
@@ -202,7 +251,8 @@ describe("PR review tools", { concurrency: false }, () => {
   });
 
   test("registers PR review tools without changing stack tools", () => {
-    assert.ok(MCP_TOOL_NAMES.includes("review_get_pr"));
+    assert.equal((MCP_TOOL_NAMES as readonly string[]).includes("review_get_pr"), false);
+    assert.equal((MCP_TOOL_NAMES as readonly string[]).includes("review_get"), false);
     assert.ok(MCP_TOOL_NAMES.includes("review_wait_pr"));
     assert.ok(MCP_TOOL_NAMES.includes("queue_status"));
     assert.deepEqual(
@@ -242,9 +292,10 @@ test("local and PR review waits default to 45s slices with a 300s ceiling", () =
   assert.equal(waitTimeoutMs(600), 300_000);
 });
 
-test("get forwards SHA and exact pass", async () => {
+test("timeout_s 0 forwards SHA and exact pass", async () => {
   const urls = mockPrFetch([{ status: 200, body: { ...review("completed"), pass: 2 } }]);
-  const result = await reviewGetPr("acme", "widgets", 12, cfg, { afterSha: "abc123d", pass: 2 });
+  const result = await reviewWaitPr("acme", "widgets", 12, "abc123d", 0, cfg, { pass: 2 });
+  assert.equal(urls.length, 1);
   const query = new URL(urls[0]!).searchParams;
   assert.equal(query.get("after_sha"), "abc123d");
   assert.equal(query.get("pass"), "2");

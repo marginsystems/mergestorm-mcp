@@ -6,6 +6,7 @@ import {
   type Config,
 } from "mergestorm/client";
 import { payloadFromRateLimit, payloadFromRow } from "./envelope.js";
+import { reviewGet } from "./review-get.js";
 import { waitTimeoutMs } from "./review-submit.js";
 import type { ToolPayload } from "./types.js";
 
@@ -24,6 +25,7 @@ export async function reviewWait(
   if (!id) {
     throw new CommandError("job_id is required", 2, "usage");
   }
+  if (timeout_s === 0) return reviewGet(id, resolved);
   try {
     const row = await pollReview(resolved, id, {
       timeoutMs: waitTimeoutMs(timeout_s),

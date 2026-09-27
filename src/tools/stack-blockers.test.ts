@@ -97,3 +97,50 @@ test("parked restackError still attention", () => {
     mergeable: false, restackError: { kind: "push_failed", attempts: 3, detail: "force-push failed" } } as Layer]);
   assert.equal(stackBlockers(stack).attention?.blocker, "Restack failed");
 });
+
+test("stack_status blockers and summary hold a PR Cyclone is patching, like stack_wait", async () => {
+  const stack = fixture([{ ...base, ciStatus: "failure", checks: { failingName: "unit" }, cycloneStatus: "patching" } as Layer]);
+  const blockers = stackBlockers(stack);
+  assert.equal(blockers.attention, null);
+  assert.deepEqual(blockers.busy, [{ prNumber: 41, headSha: head, agent: "cyclone", blocker: "CI failed — unit" }]);
+  assert.ok(stackSummary(stack).endsWith("held: #41 CI failed — unit while Cyclone patches"));
+  const result = await pollStackWatch({}, stack.id, { timeoutMs: 0,
+    fetch: async (_cfg, route) => ({ status: 200, body: route.includes("/stacks/queue") ? { entries: [] } : { stacks: [stack] } }),
+  });
+  assert.equal(result.status, "in_progress");
+  assert.deepEqual(result.busy, blockers.busy);
+});
+
+const seamStack = (seamState: string, seamReviewedSha: string | null, extra: Partial<Layer> = {}) => ({
+  ...fixture([{ ...base, prNumber: 2818, ...extra }]),
+  unit: { landPrNumber: 50, members: [
+    { prNumber: 2817, promotedHeadSha: "b".repeat(40), seamState: "none", seamReviewedSha: null },
+    { prNumber: 2818, promotedHeadSha: null, promotedAt: "2026-09-27T00:28:21Z", seamState, seamReviewedSha },
+  ] },
+} as StackDto);
+
+test("stack_status and stack_wait block a unit member whose seam has findings at its head", async () => {
+  const stack = seamStack("findings", head);
+  assert.deepEqual(stackBlockers(stack).attention, { prNumber: 2818, headSha: head, blocker: "Seam findings", bounceKind: null });
+  assert.ok(stackSummary(stack).endsWith("blocked: #2818 Seam findings"));
+  const result = await pollStackWatch({}, stack.id, { timeoutMs: 0,
+    fetch: async (_cfg, route) => ({ status: 200, body: route.includes("/stacks/queue") ? { entries: [] } : { stacks: [stack] } }),
+  });
+  assert.equal(result.status, "attention");
+  assert.equal(result.blocker, "Seam findings");
+  assert.equal(stackBlockers(seamStack("failed", null)).attention?.blocker, "Seam review failed");
+});
+
+test("stale, approved, and pending seams are not stack_status blockers", () => {
+  for (const [seamState, reviewed] of [["findings", "c".repeat(40)], ["approved", head], ["none", null], ["pending", head]] as const) {
+    assert.equal(stackBlockers(seamStack(seamState, reviewed)).attention, null, seamState);
+  }
+});
+
+test("stack_status holds seam findings while Vortex re-reviews the seam", () => {
+  const stack = seamStack("findings", head, { agentRuns: [{ agent: "vortex", status: "reviewing", sha: head }] } as Partial<Layer>);
+  const blockers = stackBlockers(stack);
+  assert.equal(blockers.attention, null);
+  assert.deepEqual(blockers.busy, [{ prNumber: 2818, headSha: head, agent: "vortex", blocker: "Seam findings" }]);
+  assert.ok(stackSummary(stack).endsWith("held: #2818 Seam findings while Vortex reviews"));
+});
