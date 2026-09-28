@@ -60,7 +60,7 @@ test("stdio initialize lists tools with read-only and write annotations", { time
       listed.tools.map((tool) => tool.name).sort(),
       [...MCP_TOOL_NAMES].sort(),
     );
-    assert.equal(listed.tools.length, 14);
+    assert.equal(listed.tools.length, 15);
     const annotations = Object.fromEntries(listed.tools.map((tool) => [tool.name, tool.annotations]));
     for (const name of [
       "whoami", "credits", "review_list", "review_wait", "review_wait_pr", "stack_list",
@@ -72,7 +72,7 @@ test("stdio initialize lists tools with read-only and write annotations", { time
       readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
     });
     assert.deepEqual(annotations.stack_adopt, { readOnlyHint: false, destructiveHint: false, idempotentHint: false });
-    for (const name of ["stack_set", "settings_set"]) {
+    for (const name of ["stack_set", "settings_set", "review_dismiss"]) {
       assert.deepEqual(annotations[name], { readOnlyHint: false, destructiveHint: false, idempotentHint: true }, name);
     }
     for (const tool of listed.tools) {

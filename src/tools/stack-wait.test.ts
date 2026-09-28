@@ -11,7 +11,7 @@ import { stackWait } from "./stack-wait.js";
 
 const openWatch = stackWatchObligation({ stackId: "stack-1", terminal: null, cursor: { enrolledHeadSha: "old-head" } });
 const envelope: StackWatchEnvelope = {
-  issues: [], currentCandidate: null, assessment: "available", busy: [], agents: null,
+  issues: [], currentCandidate: null, assessment: "available", busy: [], actAfter: null, waitingOn: [], agents: null,
   schema: "mergestorm.stack_watch/v1", status: "attention", stackId: "stack-1",
   blocker: "Conflict", bounceKind: null, prNumber: 12, headSha: "new-head",
   cursor: { stackId: "stack-1", enrolledHeadSha: "old-head" },
@@ -158,6 +158,26 @@ test("stack_wait in_progress summary names the agent holding the blocked PR", as
   });
   assert.ok(body(result.summary).startsWith("Stack stack-1 · in_progress · held: #12 CI failed while Cyclone patches and Vortex reviews · watch not finished"));
   assert.deepEqual((result.data as { busy: unknown[] }).busy.length, 2);
+});
+
+test("stack_wait in_progress names a merge conflict to act on after the agents", async () => {
+  const held = { prNumber: 12, headSha: "new-head", blocker: "Merge conflicts vs main", bounceKind: null };
+  const result = await stackWait({ stack_id: "stack-1", timeout_s: 0 }, {}, {
+    pollStackWatch: async () => ({
+      ...envelope,
+      status: "in_progress",
+      blocker: held.blocker,
+      issues: [held],
+      actAfter: "agents_idle",
+      waitingOn: ["vortex"],
+      busy: [{ prNumber: 12, headSha: "new-head", agent: "vortex", blocker: held.blocker }],
+    }),
+  });
+  assert.ok(body(result.summary).startsWith("Stack stack-1 · in_progress · blocked after the agents: #12 Merge conflicts vs main (plan the fix; act once Vortex reviews finish and the watch returns attention) · watch not finished"));
+  const data = result.data as StackWatchEnvelope;
+  assert.equal(data.actAfter, "agents_idle");
+  assert.deepEqual(data.waitingOn, ["vortex"]);
+  assert.equal(data.watch.done, false);
 });
 
 test("stack_wait text leads with the obligation, prints the repair, and data carries watch.next", async () => {

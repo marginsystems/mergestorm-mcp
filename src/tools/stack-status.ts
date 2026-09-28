@@ -32,7 +32,7 @@ export async function stackStatus(stackId: string, cfg?: Config): Promise<ToolPa
       };
     }
     const entries: MergeQueueEntryDto[] = await listMergeQueueEntries(cfg, { stackId: stack.id });
-    const { attention, issues, currentCandidate, busy, agents, repair, landGatePending } = stackBlockers(stack, entries);
+    const { attention, held, issues, currentCandidate, busy, agents, repair, landGatePending } = stackBlockers(stack, entries);
     const watch = stackWatchObligation({
       stackId: stack.id,
       terminal: stackTerminalReason(stack),
@@ -42,7 +42,7 @@ export async function stackStatus(stackId: string, cfg?: Config): Promise<ToolPa
     });
     return {
       summary: withWatchText(watch, `${stackSummary(stack, entries)}${repairSummary(repair)}`),
-      data: { stack, attention, issues, currentCandidate, busy, agents, repair, landGatePending, watch },
+      data: { stack, attention, held, issues, currentCandidate, busy, agents, repair, landGatePending, watch },
     };
   } catch (err) {
     if (isCommandErrorCode(err, "rate_limited")) {

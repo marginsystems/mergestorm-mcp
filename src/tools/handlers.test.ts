@@ -346,6 +346,7 @@ test("stack_status reads only its own stack queue and returns the wait loop bloc
     attention: expected.attention,
     issues: expected.issues,
     currentCandidate: expected.currentCandidate,
+    held: expected.held,
     busy: expected.busy,
     agents: expected.agents,
     repair: expected.repair,

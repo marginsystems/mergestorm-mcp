@@ -51,7 +51,7 @@ function stackWaitSummary(envelope: StackWatchEnvelope): string {
 }
 
 function stackWaitStatusLine(envelope: StackWatchEnvelope): string {
-  const base = `Stack ${envelope.stackId} · ${envelope.status}${stackBlockersSummary(envelope.blocker && envelope.prNumber != null ? { prNumber: envelope.prNumber, blocker: envelope.blocker } : null, envelope.issues, envelope.busy, envelope.landGatePending)}${envelope.assessment === "unavailable" ? " · assessment unavailable" : ""}`;
+  const base = `Stack ${envelope.stackId} · ${envelope.status}${stackBlockersSummary(envelope.blocker && envelope.prNumber != null ? { prNumber: envelope.prNumber, blocker: envelope.blocker } : null, envelope.issues, envelope.busy, envelope.landGatePending, envelope.actAfter ?? null)}${envelope.assessment === "unavailable" ? " · assessment unavailable" : ""}`;
   if (envelopeWatch(envelope).done || (envelope.status !== "waiting" && envelope.status !== "in_progress")) return base;
   const selectors = [
     `stack_id ${JSON.stringify(envelope.cursor.stackId)}`,

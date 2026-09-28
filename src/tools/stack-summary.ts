@@ -20,8 +20,8 @@ export function stackSummary(stack: StackDto, entries: MergeQueueEntryDto[] = []
   if (stack.cycloneOwnerMatch) {
     overrides.push(`cyclone-owner ${stack.cycloneOwnerMatch}`);
   }
-  const { attention, issues, busy, landGatePending } = stackBlockers(stack, entries);
+  const { attention, held, issues, busy, landGatePending } = stackBlockers(stack, entries);
   return `${stack.owner}/${stack.repo} · ${layerLabel} · ${currentState} · auto-land ${
     stack.autoEnqueueWhenReady ? "on" : "off"
-  }${overrides.map((label) => ` · ${label}`).join("")}${stackBlockersSummary(attention, issues, busy, landGatePending)}`;
+  }${overrides.map((label) => ` · ${label}`).join("")}${stackBlockersSummary(attention ?? held, issues, busy, landGatePending, held?.actAfter ?? null)}`;
 }

@@ -5,6 +5,7 @@ import { CommandError, BEARER_SETTINGS } from "mergestorm/client";
 import { MCP_SERVER_ICONS, MCP_WEBSITE_URL } from "./brand-icons.js";
 import { credits } from "./tools/credits.js";
 import { queueStatus } from "./tools/queue-status.js";
+import { reviewDismiss } from "./tools/review-dismiss.js";
 import { reviewList } from "./tools/review-list.js";
 import { reviewSubmit } from "./tools/review-submit.js";
 import { reviewWaitPr } from "./tools/review-wait-pr.js";
@@ -26,7 +27,7 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.1";
+export const MCP_SERVER_VERSION = "0.2.2";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -35,6 +36,7 @@ export const MCP_TOOL_NAMES = [
   "review_submit",
   "review_wait",
   "review_wait_pr",
+  "review_dismiss",
   "stack_adopt",
   "stack_list",
   "stack_set",
@@ -256,6 +258,35 @@ export function createMergestormMcpServer(): McpServer {
   );
 
   addTool(
+    "review_dismiss",
+    {
+      title: "Dismiss Vortex findings",
+      description:
+        "Record an audited dismissal of Vortex findings you verified are wrong or not actionable on a GitHub PR. Identity is exact: head_sha must be the PR's live head, review_id a Vortex review (Core or seam) made at that head, and finding_ids the GitHub review comment ids of that review (offdiff-<n> for a body-only finding), or scope \"review\" with no finding_ids to dismiss every finding of that review. reason must say why (at least 20 characters); evidence_url is optional. Call with preview: true first to list the review's finding ids and the seam gate without writing. The caller's linked GitHub account needs write access to the repository. A moved head, another review, an unknown id or a missing permission is refused and nothing is written. Retries are idempotent. The seam gate clears only when every finding of that integration review is dismissed; CI, other reviews and Auto land policy are unchanged. Vortex does not raise a dismissed finding again on the same diff. Never dismiss a finding you did not check." + STACK_WATCH_RESULT_NOTE,
+      inputSchema: {
+        owner: z.string().min(1),
+        repo: z.string().min(1),
+        pr_number: z.number().int().min(1),
+        head_sha: z.string().regex(/^[0-9a-fA-F]{40}$/),
+        review_id: z.number().int().min(1),
+        finding_ids: z.array(z.string().min(1)).max(50).optional(),
+        scope: z.enum(["findings", "review"]).optional(),
+        reason: z.string().optional(),
+        evidence_url: z.string().url().optional(),
+        preview: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await reviewDismiss(args));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  addTool(
     "stack_adopt",
     {
       title: "Adopt PR stack",
@@ -324,7 +355,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Get stack status",
       description:
-        "Fetch one owned Mergestorm stack with enriched checks and agent state, plus attention, issues, and currentCandidate from the same blocker rules as stack_wait, read against that stack's own merge queue. trunkBranch is mg-stack-<n> for an adopted 2+ PR stack and matches the bottom open PR's GitHub base; an mg-park-* parentBranch is a freeze. Neither is drift to fix. repair names the concrete fix for attention; landGatePending is a wait, not attention." + STACK_WATCH_RESULT_NOTE,
+        "Fetch one owned Mergestorm stack with enriched checks and agent state, plus attention, issues, and currentCandidate from the same blocker rules as stack_wait, read against that stack's own merge queue. trunkBranch is mg-stack-<n> for an adopted 2+ PR stack and matches the bottom open PR's GitHub base; an mg-park-* parentBranch is a freeze. Neither is drift to fix. repair names the concrete fix for attention; landGatePending is a wait, not attention. held names a blocker no agent run clears while Vortex or Cyclone is still busy on that PR (actAfter agents_idle, waitingOn); repair then describes the fix to plan, not to apply yet." + STACK_WATCH_RESULT_NOTE,
       inputSchema: {
         stack_id: z.string().min(1),
       },
@@ -344,7 +375,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Wait for stack attention",
       description:
-        "Wait for a stack to need attention. Returns a mergestorm.stack_watch/v1 envelope; timeout_s: 0 returns one snapshot and timeout_s: 1-45 waits up to that many seconds, returning the current status (waiting or in_progress) if a snapshot was read and no attention is found. A timeout with either of those statuses is not a failure; waiting and in_progress end this slice, and the next call is stack_wait again with the same cursor. A timeout of failed means no assessment was produced. A stack that no longer exists returns status failed with watch.done true (reason not_found) and is not an error. While Cyclone or Vortex is still working on the blocked PR it returns in_progress, not attention, with busy[] naming the PR, blocker, and agent; agents carries that PR's vortexStatus, cycloneStatus, vortexReview, and busy flags. Attention never calls for changing a PR's GitHub base. repair names the concrete fix for attention (restack_conflict and merge_conflict carry liveParent, never mg-park-*). A pending land gate (landGatePending) returns in_progress, not attention." + STACK_WATCH_RESULT_NOTE,
+        "Wait for a stack to need attention. Returns a mergestorm.stack_watch/v1 envelope; timeout_s: 0 returns one snapshot and timeout_s: 1-45 waits up to that many seconds, returning the current status (waiting or in_progress) if a snapshot was read and no attention is found. A timeout with either of those statuses is not a failure; waiting and in_progress end this slice, and the next call is stack_wait again with the same cursor. A timeout of failed means no assessment was produced. A stack that no longer exists returns status failed with watch.done true (reason not_found) and is not an error. While Cyclone or Vortex is still working on the blocked PR it returns in_progress, not attention, with busy[] naming the PR, blocker, and agent; agents carries that PR's vortexStatus, cycloneStatus, vortexReview, and busy flags. A blocker no agent run clears (a merge conflict vs the live parent, a restack Conflict or Restack failed, a Draft PR) is still named during that in_progress, in blocker, prNumber, headSha, and issues[], with actAfter: \"agents_idle\" and waitingOn listing the busy agents: plan the fix, and act when a snapshot after the agents finish returns attention, re-reading the blocker then. Blockers the agents can change keep blocker and actAfter null. Attention never calls for changing a PR's GitHub base. When present, repair names the concrete fix for attention (restack_conflict and merge_conflict carry liveParent, never mg-park-*). A pending land gate (landGatePending) returns in_progress, not attention." + STACK_WATCH_RESULT_NOTE,
       inputSchema: stackWaitSchema,
       annotations: { readOnlyHint: true },
     },
