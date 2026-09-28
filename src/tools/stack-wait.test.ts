@@ -1,14 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { StackWatchError, StackWatchTimeoutError, type StackWatchEnvelope } from "mergestorm/client";
+import {
+  STACK_WATCH_NOT_DONE_SENTENCE,
+  StackWatchError,
+  StackWatchTimeoutError,
+  stackWatchObligation,
+  type StackWatchEnvelope,
+} from "mergestorm/client";
 import { stackWait } from "./stack-wait.js";
 
+const openWatch = stackWatchObligation({ stackId: "stack-1", terminal: null, cursor: { enrolledHeadSha: "old-head" } });
 const envelope: StackWatchEnvelope = {
   issues: [], currentCandidate: null, assessment: "available", busy: [], agents: null,
   schema: "mergestorm.stack_watch/v1", status: "attention", stackId: "stack-1",
   blocker: "Conflict", bounceKind: null, prNumber: 12, headSha: "new-head",
   cursor: { stackId: "stack-1", enrolledHeadSha: "old-head" },
+  repair: null, landGatePending: null, watch: openWatch,
 };
+
+function body(summary: string): string {
+  assert.ok(summary.startsWith(`${STACK_WATCH_NOT_DONE_SENTENCE} `), summary);
+  return summary.split("\n\n").slice(1).join("\n\n");
+}
 
 test("stack_wait passes cursor values unchanged and returns the poller envelope", async () => {
   const controller = new AbortController();
@@ -26,7 +39,7 @@ test("stack_wait passes cursor values unchanged and returns the poller envelope"
     return envelope;
   } });
   assert.deepEqual(result.data, envelope);
-  assert.equal(result.summary, "Stack stack-1 · attention · blocked: #12 Conflict");
+  assert.equal(body(result.summary), "Stack stack-1 · attention · blocked: #12 Conflict");
   assert.notEqual(result.isError, true);
 });
 
@@ -45,7 +58,7 @@ test("stack_wait timeout returns waiting, preserving the last cursor", async () 
   });
   assert.deepEqual(result.data, last);
   assert.equal(
-    result.summary,
+    body(result.summary),
     "Stack stack-1 · waiting · watch not finished: call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha \"old-head\"",
   );
   assert.notEqual(result.isError, true);
@@ -64,7 +77,7 @@ test("stack_wait in_progress summary keeps blockers and prints explicit null sel
     }),
   });
   assert.equal(
-    result.summary,
+    body(result.summary),
     "Stack stack-1 · in_progress · issues: #13 CI failed · assessment unavailable · watch not finished: call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha null, after_finished_at null, bounce_id \"bounce-1\"",
   );
 });
@@ -79,7 +92,7 @@ test("stack_wait summary includes issues and unavailable assessment", async () =
       issues: [{ prNumber: 13, headSha: null, blocker: "CI failed", bounceKind: null }],
     }),
   });
-  assert.equal(result.summary, "Stack stack-1 · attention · issues: #13 CI failed · assessment unavailable");
+  assert.equal(body(result.summary), "Stack stack-1 · attention · issues: #13 CI failed · assessment unavailable");
 });
 
 test("stack_wait returns poll errors as structured status data", async () => {
@@ -94,7 +107,7 @@ test("stack_wait returns poll errors as structured status data", async () => {
   });
   assert.equal(result.isError, true);
   assert.deepEqual(result.data, { ...last, retry_after_seconds: 9 });
-  assert.equal(result.summary, "Stack stack-1 · failed · blocked: #12 Conflict · issues: #13 CI failed · assessment unavailable");
+  assert.equal(body(result.summary), "Stack stack-1 · failed · blocked: #12 Conflict · issues: #13 CI failed · assessment unavailable");
 });
 
 test("stack_wait rejects invalid timeout and missing id before polling", async () => {
@@ -143,6 +156,63 @@ test("stack_wait in_progress summary names the agent holding the blocked PR", as
       ],
     }),
   });
-  assert.ok(result.summary.startsWith("Stack stack-1 · in_progress · held: #12 CI failed while Cyclone patches and Vortex reviews · watch not finished"));
+  assert.ok(body(result.summary).startsWith("Stack stack-1 · in_progress · held: #12 CI failed while Cyclone patches and Vortex reviews · watch not finished"));
   assert.deepEqual((result.data as { busy: unknown[] }).busy.length, 2);
+});
+
+test("stack_wait text leads with the obligation, prints the repair, and data carries watch.next", async () => {
+  const repair = {
+    kind: "restack_conflict" as const, prNumber: 12, headSha: "new-head", branch: "feat/c", liveParent: "mg-stack-79",
+    files: ["api/src/a.ts"], steps: "Merge mg-stack-79 into feat/c: git fetch origin, git merge origin/mg-stack-79.",
+  };
+  const result = await stackWait({ stack_id: "stack-1", timeout_s: 0 }, {}, {
+    pollStackWatch: async () => ({ ...envelope, repair }),
+  });
+  assert.ok(result.summary.startsWith("This stack is not landed. Your task is not done. Call stack_wait again with this cursor."));
+  assert.match(result.summary, /\nRepair #12 \(restack_conflict\)\. Files: api\/src\/a\.ts\. Merge mg-stack-79 into feat\/c/);
+  const data = result.data as StackWatchEnvelope;
+  assert.deepEqual(data.watch.next, { tool: "stack_wait", command: "mg stack wait stack-1 --json",
+    args: { stack_id: "stack-1", enrolled_head_sha: "old-head", timeout_s: 45 } });
+  assert.deepEqual(data.repair, repair);
+});
+
+test("stack_wait on a landed stack says done and drops the keep-watching selectors", async () => {
+  const landed = { ...envelope, status: "waiting" as const, blocker: null,
+    watch: stackWatchObligation({ stackId: "stack-1", terminal: "landed" }) };
+  const result = await stackWait({ stack_id: "stack-1" }, {}, { pollStackWatch: async () => landed });
+  assert.ok(result.summary.startsWith("This stack is landed. The watch is done"));
+  assert.doesNotMatch(result.summary, /watch not finished|Your task is not done/);
+  assert.equal((result.data as StackWatchEnvelope).watch.done, true);
+  assert.notEqual(result.isError, true);
+});
+
+test("stack_wait on a vanished stack is done: not_found, not an error", async () => {
+  const gone = { ...envelope, status: "failed" as const, assessment: "unavailable" as const, blocker: null,
+    watch: stackWatchObligation({ stackId: "stack-1", terminal: "not_found" }) };
+  const result = await stackWait({ stack_id: "stack-1" }, {}, {
+    pollStackWatch: async () => { throw new StackWatchError("Stack not found or not owned by the current user", gone); },
+  });
+  assert.notEqual(result.isError, true);
+  assert.equal((result.data as StackWatchEnvelope).watch.reason, "not_found");
+  assert.match(result.summary, /^No stack with this id exists/);
+});
+
+test("stack_wait fills watch for a poller that predates it", async () => {
+  const { watch: _watch, ...legacy } = envelope;
+  const result = await stackWait({ stack_id: "stack-1" }, {}, {
+    pollStackWatch: async () => legacy as StackWatchEnvelope,
+  });
+  assert.equal((result.data as StackWatchEnvelope).watch.done, false);
+  assert.ok(result.summary.startsWith(STACK_WATCH_NOT_DONE_SENTENCE));
+});
+
+test("a failed read keeps the obligation and stays an error", async () => {
+  const failed = { ...envelope, status: "failed" as const, assessment: "unavailable" as const,
+    watch: stackWatchObligation({ stackId: "stack-1", terminal: null, status: "failed", cursor: envelope.cursor }) };
+  const result = await stackWait({ stack_id: "stack-1" }, {}, {
+    pollStackWatch: async () => { throw new StackWatchError("boom", failed); },
+  });
+  assert.equal(result.isError, true);
+  assert.equal((result.data as StackWatchEnvelope).watch.reason, "failed");
+  assert.ok(result.summary.startsWith(STACK_WATCH_NOT_DONE_SENTENCE));
 });

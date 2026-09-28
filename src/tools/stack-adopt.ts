@@ -1,6 +1,7 @@
-import { adoptStack, CommandError, type Config } from "mergestorm/client";
+import { adoptStack, CommandError, stackWatchObligation, type Config } from "mergestorm/client";
 import { z } from "zod";
 import { stackSetPatch } from "./stack-set.js";
+import { withWatchText } from "./stack-wait.js";
 import type { ToolPayload } from "./types.js";
 
 export const stackAdoptSchema = {
@@ -29,9 +30,17 @@ export async function stackAdopt(input: StackAdoptInput, cfg?: Config): Promise<
       cfg,
       stackSetPatch(parsed.data),
     );
+    const summary = `Adopted stack for ${owner}/${repo}#${pr_number}`;
+    const stackId = typeof result === "object" && result !== null
+      ? (result as { stack?: { id?: unknown } }).stack?.id
+      : undefined;
+    if (typeof stackId !== "string" || !stackId) {
+      return { summary, data: { owner, repo, pr_number, result } };
+    }
+    const watch = stackWatchObligation({ stackId, terminal: null, unread: true, freshCursor: true });
     return {
-      summary: `Adopted stack for ${owner}/${repo}#${pr_number}`,
-      data: { owner, repo, pr_number, result },
+      summary: withWatchText(watch, summary),
+      data: { owner, repo, pr_number, result, watch },
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { CommandError, REVIEW_JOB_ENVELOPE_SCHEMA, stackBlockers, type MergeQueueEntryDto, type StackDto } from "mergestorm/client";
+import {
+  CommandError,
+  REVIEW_JOB_ENVELOPE_SCHEMA,
+  STACK_WATCH_NOT_DONE_SENTENCE,
+  stackBlockers,
+  stackWatchObligation,
+  type MergeQueueEntryDto,
+  type StackDto,
+} from "mergestorm/client";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMergestormMcpServer } from "../server.js";
@@ -16,6 +24,16 @@ import { stackSet } from "./stack-set.js";
 import { stackStatus } from "./stack-status.js";
 import { stackSummary } from "./stack-summary.js";
 import { whoami } from "./whoami.js";
+
+function stackBody(summary: string): string {
+  const [watchText, ...rest] = summary.split("\n\n");
+  assert.ok(watchText!.startsWith(STACK_WATCH_NOT_DONE_SENTENCE), watchText);
+  return rest.join("\n\n");
+}
+
+function statusLine(summary: string): string {
+  return stackBody(summary).split("\n")[0]!;
+}
 
 const cfg = {
   apiKey: "msk_live_test_mcp_key",
@@ -253,7 +271,7 @@ test("stack_status summary includes cycloneOwnerMatch when present", async () =>
   });
   const result = await stackStatus("stack-9", cfg);
   assert.equal(
-    result.summary,
+    statusLine(result.summary),
     "acme/widgets · 1 layer · restack: clean · auto-land off · cyclone-owner different",
   );
   const stack = result.data.stack as {
@@ -279,7 +297,7 @@ test("stack_status returns one enriched owned stack", async () => {
   });
   const result = await stackStatus("stack-9", cfg);
   assert.equal(
-    result.summary,
+    statusLine(result.summary),
     "acme/widgets · 1 layer · restack: clean · auto-land off",
   );
   assert.equal(result.isError, undefined);
@@ -330,11 +348,49 @@ test("stack_status reads only its own stack queue and returns the wait loop bloc
     currentCandidate: expected.currentCandidate,
     busy: expected.busy,
     agents: expected.agents,
+    repair: expected.repair,
+    landGatePending: null,
+    watch: stackWatchObligation({ stackId: "stack-9", terminal: null, cursor: { enrolledHeadSha: head }, freshCursor: true,
+      attention: { prNumber: 7, blocker: "CI failed — lint" } }),
   });
+  assert.equal((result.data.repair as { kind: string }).kind, "ci_failure");
+  assert.match(result.summary, /^This stack is not landed\. Your task is not done\. Call stack_wait again with this cursor\./);
   assert.equal(result.data.attention && (result.data.attention as { blocker: string }).blocker, "CI failed — lint");
   assert.deepEqual(result.data.issues, [{ prNumber: 8, headSha: "b".repeat(40), blocker: "CI failed", bounceKind: null }]);
   assert.deepEqual(result.data.currentCandidate, { prNumber: 7, headSha: head });
-  assert.match(result.summary, /blocked: #7 CI failed — lint · issues: #8 CI failed$/);
+  assert.match(statusLine(result.summary), /blocked: #7 CI failed — lint · issues: #8 CI failed$/);
+});
+
+test("stack_status reports a landed stack as done and drops the obligation", async () => {
+  originalFetch ??= globalThis.fetch;
+  globalThis.fetch = async (input) => String(input).includes("/stacks/queue")
+    ? Response.json({ entries: [] })
+    : Response.json({ stacks: [{
+      id: "stack-9", owner: "acme", repo: "widgets", trunkBranch: "mg-stack-4", archivedAt: null,
+      layers: [{ prNumber: 7, position: 1, branch: "feature", state: "merged" }],
+      unit: { id: "u", uNumber: 4, state: "landed", branch: "mg-stack-4", landTarget: "main", members: [],
+        landPrNumber: 90, tempestLandStatus: null, landingBlockReason: null, landPr: null },
+    }] });
+  const result = await stackStatus("stack-9", cfg);
+  const watch = result.data.watch as { done: boolean; reason: string; next: unknown };
+  assert.deepEqual({ done: watch.done, reason: watch.reason, next: watch.next }, { done: true, reason: "landed", next: null });
+  assert.ok(result.summary.startsWith("This stack is landed. The watch is done"));
+  assert.doesNotMatch(result.summary, /Your task is not done/);
+});
+
+test("stack_status on an archived stack is done: archived", async () => {
+  mockFetch(200, { stacks: [{ id: "stack-9", owner: "acme", repo: "widgets", archivedAt: "2026-09-28T00:00:00Z",
+    layers: [{ prNumber: 7, position: 1, branch: "feature", state: "clean" }] }] });
+  const result = await stackStatus("stack-9", cfg);
+  assert.equal((result.data.watch as { reason: string }).reason, "archived");
+});
+
+test("stack_status for a missing stack is done: not_found with neutral wording", async () => {
+  mockFetch(200, { stacks: [] });
+  const result = await stackStatus("stack-9", cfg);
+  assert.equal(result.isError, true);
+  assert.equal((result.data.watch as { reason: string }).reason, "not_found");
+  assert.match(result.summary, /a mistyped id or another account's stack reads the same/);
 });
 
 test("stack_status maps a queue 429 to rate_limited with retry_after_seconds", async () => {
@@ -374,7 +430,8 @@ test("stack_set PATCHes Auto land on the owned stack", async () => {
   assert.equal(requestUrl, "https://api.example.test/api/v1/stacks/stack-9");
   assert.equal(requestMethod, "PATCH");
   assert.deepEqual(requestBody, { autoEnqueueWhenReady: true });
-  assert.equal(result.summary, "Auto land on for stack stack-9");
+  assert.equal(stackBody(result.summary), "Auto land on for stack stack-9");
+  assert.deepEqual(result.data.watch, stackWatchObligation({ stackId: "stack-9", terminal: null, unread: true, freshCursor: true }));
 });
 
 test("stack_set PATCHes the per-stack review / patch overrides, null clearing one", async () => {
@@ -391,7 +448,7 @@ test("stack_set PATCHes the per-stack review / patch overrides, null clearing on
   );
   assert.deepEqual(requestBody, { autoReviewOverride: null, autoPatchOverride: false });
   assert.equal(result.isError, undefined);
-  assert.equal(result.summary, "auto-review default, auto-patch off for stack stack-9");
+  assert.equal(stackBody(result.summary), "auto-review default, auto-patch off for stack stack-9");
   assert.deepEqual(result.data.auto_review, null);
   assert.deepEqual(result.data.auto_patch, false);
   assert.equal("auto_land" in result.data, false);
@@ -881,8 +938,9 @@ for (const policy of adoptPolicies) {
     const result = await stackAdopt({ owner: " acme ", repo: "widgets", pr_number: 42, ...policy }, cfg);
     assert.equal(calls, 1);
     assert.equal(result.isError, undefined);
-    assert.equal(result.summary, "Adopted stack for acme/widgets#42");
+    assert.equal(stackBody(result.summary), "Adopted stack for acme/widgets#42");
     assert.deepEqual(result.data.result, body);
+    assert.deepEqual(result.data.watch, stackWatchObligation({ stackId: "stack-9", terminal: null, unread: true, freshCursor: true }));
   });
 }
 
@@ -1067,7 +1125,7 @@ test("stack_status appends the shared CI blocker label and preserves summary fie
       checks: { failure: 1, failingName: "unit tests" } }],
   }] });
   const result = await stackStatus("blocked-stack", cfg);
-  assert.equal(result.summary,
+  assert.equal(statusLine(result.summary),
     "acme/widgets · 1 layer · restack: clean · auto-land on · auto-review off · blocked: #7 CI failed — unit tests");
 });
 
@@ -1092,7 +1150,7 @@ for (const scenario of ["current", "new head", "requeued", "different PR", "clos
       String(input).includes("/stacks/queue?stackId=bounced-stack") ? { entries } : { stacks: [stack] },
     );
     const result = await stackStatus(stack.id, cfg);
-    if (scenario === "current") assert.match(result.summary, /blocked: #7 CI failed — unit tests$/);
+    if (scenario === "current") assert.match(statusLine(result.summary), /blocked: #7 CI failed — unit tests$/);
     else assert.doesNotMatch(result.summary, /blocked:/);
   });
 }
@@ -1195,6 +1253,6 @@ for (const [detail, label] of [
       layers: [{ prNumber: 7, position: 1, state: "clean", headSha: "aaaaaaa", ...detail }],
     }] });
     const result = await stackStatus("blocked-stack", cfg);
-    assert.ok(result.summary.endsWith(`blocked: #7 ${label}`));
+    assert.ok(statusLine(result.summary).endsWith(`blocked: #7 ${label}`));
   });
 }

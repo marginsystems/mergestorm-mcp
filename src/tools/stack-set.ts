@@ -1,4 +1,5 @@
-import { setStackPolicy, type Config, type StackPolicyPatch } from "mergestorm/client";
+import { setStackPolicy, stackWatchObligation, type Config, type StackPolicyPatch } from "mergestorm/client";
+import { withWatchText } from "./stack-wait.js";
 import type { ToolPayload } from "./types.js";
 
 /**
@@ -54,14 +55,16 @@ export async function stackSet(
   if (input.auto_patch !== undefined) {
     parts.push(`auto-patch ${triWord(input.auto_patch)}`);
   }
+  const watch = stackWatchObligation({ stackId, terminal: null, unread: true, freshCursor: true });
   return {
-    summary: `${parts.join(", ")} for stack ${stackId}`,
+    summary: withWatchText(watch, `${parts.join(", ")} for stack ${stackId}`),
     data: {
       stack_id: stackId,
       ...(typeof input.auto_land === "boolean" ? { auto_land: input.auto_land } : {}),
       ...(input.auto_review !== undefined ? { auto_review: input.auto_review } : {}),
       ...(input.auto_patch !== undefined ? { auto_patch: input.auto_patch } : {}),
       result,
+      watch,
     },
   };
 }

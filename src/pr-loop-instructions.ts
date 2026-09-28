@@ -15,6 +15,13 @@ export const MCP_PR_LOOP_INSTRUCTIONS = [
   "- Do not prefix that comment with cyclone-outcome: (reserved).",
 ].join("\n");
 
+export const MCP_STACK_DONE_INSTRUCTIONS = [
+  "When stack work is done:",
+  "- Stack work is done only when the stack is landed, or when the human takes it back (archives it or tells you to stop). A clean push, a submit, an adopt, or one merged layer is not done: merging a lower layer can break a layer above it.",
+  "- Every stack_wait, stack_status, stack_adopt, and stack_set result carries watch: {done, until, reason, next, message}. While watch.done is false, keep calling stack_wait with watch.next.args (the returned cursor), 45s at a time, and do not end your task. Stop only when watch.done is true.",
+  "- attention means something for you to fix; repair, when present, names the concrete fix. A pending land gate (landGatePending: ci_pending, tempest_pending, tempest_running) is a wait, not attention.",
+].join("\n");
+
 export const MCP_STACK_BASE_INSTRUCTIONS = [
   "Stack PR bases (Mergestorm sets these; leave them):",
   "- Stack of 2+ PRs: after adopt (stack_adopt, mg stack adopt, or mg stack submit) the bottom PR's GitHub base is the owned trunk mg-stack-<n>, not main. That is correct. Layer 2 is based on layer 1; layer 3+ on the mg-park-* freeze; the git parent of layer 2+ is still the layer below. A 1-PR stack stays on main and gets no mg-stack-<n>.",

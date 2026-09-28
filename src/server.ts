@@ -19,13 +19,14 @@ import { stackStatus } from "./tools/stack-status.js";
 import type { ToolPayload } from "./tools/types.js";
 import { whoami } from "./tools/whoami.js";
 import {
+  MCP_STACK_DONE_INSTRUCTIONS,
   MCP_PR_LOOP_INSTRUCTIONS,
   MCP_STACK_BASE_INSTRUCTIONS,
   MCP_STACK_WATCH_INSTRUCTIONS,
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.0";
+export const MCP_SERVER_VERSION = "0.2.1";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -43,6 +44,16 @@ export const MCP_TOOL_NAMES = [
   "settings_get",
   "settings_set",
 ] as const;
+
+export const MCP_SERVER_INSTRUCTIONS = [
+  MCP_STACK_DONE_INSTRUCTIONS,
+  MCP_PR_LOOP_INSTRUCTIONS,
+  MCP_STACK_BASE_INSTRUCTIONS,
+  MCP_STACK_WATCH_INSTRUCTIONS,
+].join("\n\n");
+
+const STACK_WATCH_RESULT_NOTE =
+  " The result carries watch {done, until: \"landed\", reason, next, message}: while watch.done is false the stack is not landed and your task is not done; call stack_wait with watch.next.args.";
 
 function stripNulls(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -90,7 +101,7 @@ export function createMergestormMcpServer(): McpServer {
       websiteUrl: MCP_WEBSITE_URL,
       icons: MCP_SERVER_ICONS,
     },
-    { instructions: `${MCP_PR_LOOP_INSTRUCTIONS}\n\n${MCP_STACK_BASE_INSTRUCTIONS}\n\n${MCP_STACK_WATCH_INSTRUCTIONS}` },
+    { instructions: MCP_SERVER_INSTRUCTIONS },
   );
   // MCP SDK + zod generic inference hits TS2589 on several schemas; keep
   // runtime registerTool, drop the instantiation from our typecheck.
@@ -249,7 +260,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Adopt PR stack",
       description:
-        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land is boolean; auto_review and auto_patch accept true, false, or null, where null clears the override. Omitted auto_land seeds from auto_land_default; omitted auto_review and auto_patch overrides are not seeded. Never changes account settings. Adoption requires a Cyclone GitHub App install; without it the API returns cyclone_not_connected — do not retry, tell the human. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership. With 2+ PRs, adopt moves the bottom PR's GitHub base to mg-stack-<n> and parks PR3+ on an mg-park-* freeze; a 1-PR stack stays on main. Leave those bases. Never retarget the bottom back to main.",
+        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land is boolean; auto_review and auto_patch accept true, false, or null, where null clears the override. Omitted auto_land seeds from auto_land_default; omitted auto_review and auto_patch overrides are not seeded. Never changes account settings. Adoption requires a Cyclone GitHub App install; without it the API returns cyclone_not_connected — do not retry, tell the human. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership. With 2+ PRs, adopt moves the bottom PR's GitHub base to mg-stack-<n> and parks PR3+ on an mg-park-* freeze; a 1-PR stack stays on main. Leave those bases. Never retarget the bottom back to main." + STACK_WATCH_RESULT_NOTE,
       inputSchema: stackAdoptSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
@@ -284,7 +295,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Set stack policy",
       description:
-        "Set per-stack automation on one owned Mergestorm stack: auto_land arms or disarms Auto land; auto_review and auto_patch pin Vortex auto-review or Cyclone auto-patch for this stack only (true or false), and null clears the pin so the stack follows the account setting again. Pass at least one key. Never changes account settings.",
+        "Set per-stack automation on one owned Mergestorm stack: auto_land arms or disarms Auto land; auto_review and auto_patch pin Vortex auto-review or Cyclone auto-patch for this stack only (true or false), and null clears the pin so the stack follows the account setting again. Pass at least one key. Never changes account settings." + STACK_WATCH_RESULT_NOTE,
       inputSchema: {
         stack_id: z.string().min(1),
         auto_land: z.boolean().optional(),
@@ -313,7 +324,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Get stack status",
       description:
-        "Fetch one owned Mergestorm stack with enriched checks and agent state, plus attention, issues, and currentCandidate from the same blocker rules as stack_wait, read against that stack's own merge queue. trunkBranch is mg-stack-<n> for an adopted 2+ PR stack and matches the bottom open PR's GitHub base; an mg-park-* parentBranch is a freeze. Neither is drift to fix.",
+        "Fetch one owned Mergestorm stack with enriched checks and agent state, plus attention, issues, and currentCandidate from the same blocker rules as stack_wait, read against that stack's own merge queue. trunkBranch is mg-stack-<n> for an adopted 2+ PR stack and matches the bottom open PR's GitHub base; an mg-park-* parentBranch is a freeze. Neither is drift to fix. repair names the concrete fix for attention; landGatePending is a wait, not attention." + STACK_WATCH_RESULT_NOTE,
       inputSchema: {
         stack_id: z.string().min(1),
       },
@@ -333,7 +344,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Wait for stack attention",
       description:
-        "Wait for a stack to need attention. Returns a mergestorm.stack_watch/v1 envelope; timeout_s: 0 returns one snapshot and timeout_s: 1-45 waits up to that many seconds, returning the current status (waiting or in_progress) if a snapshot was read and no attention is found. A timeout with either of those statuses is not a failure; waiting and in_progress end this slice, and the next call is stack_wait again with the same cursor. A timeout of failed means no assessment was produced. While Cyclone or Vortex is still working on the blocked PR it returns in_progress, not attention, with busy[] naming the PR, blocker, and agent; agents carries that PR's vortexStatus, cycloneStatus, vortexReview, and busy flags. Attention never calls for changing a PR's GitHub base.",
+        "Wait for a stack to need attention. Returns a mergestorm.stack_watch/v1 envelope; timeout_s: 0 returns one snapshot and timeout_s: 1-45 waits up to that many seconds, returning the current status (waiting or in_progress) if a snapshot was read and no attention is found. A timeout with either of those statuses is not a failure; waiting and in_progress end this slice, and the next call is stack_wait again with the same cursor. A timeout of failed means no assessment was produced. A stack that no longer exists returns status failed with watch.done true (reason not_found) and is not an error. While Cyclone or Vortex is still working on the blocked PR it returns in_progress, not attention, with busy[] naming the PR, blocker, and agent; agents carries that PR's vortexStatus, cycloneStatus, vortexReview, and busy flags. Attention never calls for changing a PR's GitHub base. repair names the concrete fix for attention (restack_conflict and merge_conflict carry liveParent, never mg-park-*). A pending land gate (landGatePending) returns in_progress, not attention." + STACK_WATCH_RESULT_NOTE,
       inputSchema: stackWaitSchema,
       annotations: { readOnlyHint: true },
     },

@@ -4,7 +4,10 @@ import {
   pollStackWatch,
   StackWatchError,
   StackWatchTimeoutError,
+  stackWatchObligation,
   type Config,
+  type StackRepairHint,
+  type StackWatchObligation,
   type StackWatchCursor,
   type StackWatchEnvelope,
 } from "mergestorm/client";
@@ -27,9 +30,29 @@ export type StackWaitInput = {
   bounce_id?: string | null;
 };
 
+export function repairSummary(repair: StackRepairHint | null | undefined): string {
+  if (!repair) return "";
+  const files = "files" in repair && repair.files.length ? ` Files: ${repair.files.join(", ")}.` : "";
+  return `\nRepair #${repair.prNumber} (${repair.kind}).${files} ${repair.steps}`;
+}
+
+export function withWatchText(watch: StackWatchObligation, body: string): string {
+  return `${watch.message}\n\n${body}`;
+}
+
+function envelopeWatch(envelope: StackWatchEnvelope): StackWatchObligation {
+  return envelope.watch ?? stackWatchObligation({
+    stackId: envelope.stackId, terminal: null, cursor: envelope.cursor, status: envelope.status,
+  });
+}
+
 function stackWaitSummary(envelope: StackWatchEnvelope): string {
-  const base = `Stack ${envelope.stackId} · ${envelope.status}${stackBlockersSummary(envelope.blocker && envelope.prNumber != null ? { prNumber: envelope.prNumber, blocker: envelope.blocker } : null, envelope.issues, envelope.busy)}${envelope.assessment === "unavailable" ? " · assessment unavailable" : ""}`;
-  if (envelope.status !== "waiting" && envelope.status !== "in_progress") return base;
+  return withWatchText(envelopeWatch(envelope), `${stackWaitStatusLine(envelope)}${repairSummary(envelope.repair)}`);
+}
+
+function stackWaitStatusLine(envelope: StackWatchEnvelope): string {
+  const base = `Stack ${envelope.stackId} · ${envelope.status}${stackBlockersSummary(envelope.blocker && envelope.prNumber != null ? { prNumber: envelope.prNumber, blocker: envelope.blocker } : null, envelope.issues, envelope.busy, envelope.landGatePending)}${envelope.assessment === "unavailable" ? " · assessment unavailable" : ""}`;
+  if (envelopeWatch(envelope).done || (envelope.status !== "waiting" && envelope.status !== "in_progress")) return base;
   const selectors = [
     `stack_id ${JSON.stringify(envelope.cursor.stackId)}`,
     `enrolled_head_sha ${JSON.stringify(envelope.cursor.enrolledHeadSha)}`,
@@ -63,20 +86,22 @@ export async function stackWait(
     });
   } catch (err) {
     if (err instanceof StackWatchError) {
+      const envelope = { ...err.lastEnvelope, watch: envelopeWatch(err.lastEnvelope) };
       return {
-        summary: stackWaitSummary(err.lastEnvelope),
+        summary: stackWaitSummary(envelope),
         data: {
-          ...err.lastEnvelope,
+          ...envelope,
           ...(err.retryAfterSeconds !== undefined ? { retry_after_seconds: err.retryAfterSeconds } : {}),
         },
-        isError: true,
+        isError: !envelope.watch.done,
       };
     }
     if (!(err instanceof StackWatchTimeoutError)) throw err;
     envelope = err.lastEnvelope;
   }
+  const sealed = { ...envelope, watch: envelopeWatch(envelope) };
   return {
-    summary: stackWaitSummary(envelope),
-    data: envelope,
+    summary: stackWaitSummary(sealed),
+    data: sealed,
   };
 }
