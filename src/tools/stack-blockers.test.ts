@@ -15,6 +15,9 @@ for (const [detail, label] of [
   [{ mergeable: false }, "Merge conflicts vs main"],
   [{ ciStatus: "failure", checks: { failingName: "unit" } }, "CI failed — unit"],
   [{ vortexStatus: "failed" }, "Review failed"],
+  [{ vortexStatus: "skipped", vortexReview: { status: "skipped", skip_reason: "quota_exceeded", pass: 1, head_sha: head,
+    phase: null, started_at: null, stoppable: false, source: "pr_reviews" } }, "Review skipped, out of review quota"],
+  [{ agentRuns: [{ agent: "cyclone", status: "failed", sha: head }] }, "Cyclone failed"],
   [{ agentRuns: [{ agent: "tempest", status: "findings", sha: head }] }, "Tempest findings"],
   [{ agentRuns: [{ agent: "tempest", status: "failed", sha: head }] }, "Tempest failed"],
 ] as [Partial<Layer>, string][]) {
@@ -131,10 +134,17 @@ test("stack_status and stack_wait block a unit member whose seam has findings at
   assert.equal(stackBlockers(seamStack("failed", null)).attention?.blocker, "Seam review failed");
 });
 
-test("stale, approved, and pending seams are not stack_status blockers", () => {
-  for (const [seamState, reviewed] of [["findings", "c".repeat(40)], ["approved", head], ["none", null], ["pending", head]] as const) {
+test("stale, approved, and running pending seams are not stack_status blockers", () => {
+  for (const [seamState, reviewed] of [["findings", "c".repeat(40)], ["approved", head], ["none", null]] as const) {
     assert.equal(stackBlockers(seamStack(seamState, reviewed)).attention, null, seamState);
   }
+  const running = seamStack("pending", head, { agentRuns: [{ agent: "vortex", status: "reviewing", sha: head }] } as Partial<Layer>);
+  assert.equal(stackBlockers(running).attention, null);
+  assert.deepEqual(stackBlockers(running).busy, []);
+});
+
+test("a pending seam with no review running is a stack_status blocker", () => {
+  assert.equal(stackBlockers(seamStack("pending", head)).attention?.blocker, "Seam review pending, no review running");
 });
 
 test("stack_status holds seam findings while Vortex re-reviews the seam", () => {
