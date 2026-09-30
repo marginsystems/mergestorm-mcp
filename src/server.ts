@@ -27,7 +27,7 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.3";
+export const MCP_SERVER_VERSION = "0.2.4";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
