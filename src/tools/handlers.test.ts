@@ -113,6 +113,36 @@ test("credits returns monthly and bonus usage with resets_at", async () => {
   assert.equal(result.data.resets_at, meBody.resets_at);
 });
 
+test("credits adds the surge meter to the summary and keeps it in the data", async () => {
+  const surge = {
+    includedMinutes: 300,
+    usedMinutes: 120,
+    walletMinutes: 1000,
+    windowStart: "2026-08-14T10:20:00.000Z",
+    pricePerMinuteUsd: 0.005,
+  };
+  mockFetch(200, { ...meBody, usage: { ...meBody.usage, surge } });
+  const result = await credits(cfg);
+  assert.equal(
+    result.summary,
+    "3 used · 37 remaining · 9 bonus remaining\nSurge: 120 of 300 included min this period · wallet 1,000 min",
+  );
+  assert.deepEqual((result.data.usage as { surge: unknown }).surge, surge);
+});
+
+test("credits prints only the wallet for a Surge account without included minutes", async () => {
+  const surge = {
+    includedMinutes: 0,
+    usedMinutes: 0,
+    walletMinutes: 500,
+    windowStart: "2026-08-14T10:20:00.000Z",
+    pricePerMinuteUsd: 0.005,
+  };
+  mockFetch(200, { ...meBody, usage: { ...meBody.usage, surge } });
+  const result = await credits(cfg);
+  assert.equal(result.summary, "3 used · 37 remaining · 9 bonus remaining\nSurge: wallet 500 min");
+});
+
 test("review_list wraps jobs in the review envelope", async () => {
   mockFetch(200, {
     items: [

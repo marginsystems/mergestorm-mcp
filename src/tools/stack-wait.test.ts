@@ -59,7 +59,7 @@ test("stack_wait timeout returns waiting, preserving the last cursor", async () 
   assert.deepEqual(result.data, last);
   assert.equal(
     body(result.summary),
-    "Stack stack-1 · waiting · watch not finished: call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha \"old-head\"",
+    "Stack stack-1 · waiting · watch not finished: run mg stack watch stack-1 as a background command and end your turn, or call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha \"old-head\"",
   );
   assert.notEqual(result.isError, true);
 });
@@ -78,7 +78,7 @@ test("stack_wait in_progress summary keeps blockers and prints explicit null sel
   });
   assert.equal(
     body(result.summary),
-    "Stack stack-1 · in_progress · issues: #13 CI failed · assessment unavailable · watch not finished: call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha null, after_finished_at null, bounce_id \"bounce-1\"",
+    "Stack stack-1 · in_progress · issues: #13 CI failed · assessment unavailable · watch not finished: run mg stack watch stack-1 as a background command and end your turn, or call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha null, after_finished_at null, bounce_id \"bounce-1\"",
   );
 });
 
@@ -191,7 +191,7 @@ test("stack_wait text leads with the obligation, prints the repair, and data car
   assert.ok(result.summary.startsWith("This stack is not landed. Your task is not done. Call stack_wait again with this cursor."));
   assert.match(result.summary, /\nRepair #12 \(restack_conflict\)\. Files: api\/src\/a\.ts\. Merge mg-stack-79 into feat\/c/);
   const data = result.data as StackWatchEnvelope;
-  assert.deepEqual(data.watch.next, { tool: "stack_wait", command: "mg stack wait stack-1 --json",
+  assert.deepEqual(data.watch.next, { tool: "stack_wait", command: "mg stack wait stack-1 --json", background: "mg stack watch stack-1",
     args: { stack_id: "stack-1", enrolled_head_sha: "old-head", timeout_s: 45 } });
   assert.deepEqual(data.repair, repair);
 });

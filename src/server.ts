@@ -27,7 +27,7 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.5";
+export const MCP_SERVER_VERSION = "0.2.6";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -55,7 +55,7 @@ export const MCP_SERVER_INSTRUCTIONS = [
 ].join("\n\n");
 
 const STACK_WATCH_RESULT_NOTE =
-  " The result carries watch {done, until: \"landed\", reason, next, message}: while watch.done is false the stack is not landed and your task is not done; call stack_wait with watch.next.args.";
+  " The result carries watch {done, until: \"landed\", reason, next, message}: while watch.done is false the stack is not landed and your task is not done; call stack_wait with watch.next.args, or run watch.next.background as a background command and end your turn.";
 
 function stripNulls(value: unknown): unknown {
   if (Array.isArray(value)) {
