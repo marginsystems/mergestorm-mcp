@@ -134,13 +134,26 @@ test("stack_status and stack_wait block a unit member whose seam has findings at
   assert.equal(stackBlockers(seamStack("failed", null)).attention?.blocker, "Seam review failed");
 });
 
-test("stale, approved, and running pending seams are not stack_status blockers", () => {
-  for (const [seamState, reviewed] of [["findings", "c".repeat(40)], ["approved", head], ["none", null]] as const) {
+test("approved-at-head, none, and running pending seams are not stack_status blockers", () => {
+  for (const [seamState, reviewed] of [["approved", head], ["none", null]] as const) {
     assert.equal(stackBlockers(seamStack(seamState, reviewed)).attention, null, seamState);
   }
   const running = seamStack("pending", head, { agentRuns: [{ agent: "vortex", status: "reviewing", sha: head }] } as Partial<Layer>);
   assert.equal(stackBlockers(running).attention, null);
   assert.deepEqual(stackBlockers(running).busy, []);
+});
+
+test("a stuck, re-review-pending, or stale seam with no review running is a stack_status blocker", () => {
+  const stale = seamStack("findings", "c".repeat(40));
+  assert.equal(stackBlockers(stale).attention?.blocker, "Seam verdict is for an older head, no review running");
+  assert.equal(stackBlockers(stale).repair?.kind, "seam_review_stuck");
+  assert.ok(stackSummary(stale).endsWith("blocked: #2818 Seam verdict is for an older head, no review running"));
+  assert.equal(stackBlockers(seamStack("reviewing", "c".repeat(40))).attention?.blocker,
+    "Seam review stuck in reviewing, no review running");
+  assert.equal(stackBlockers(seamStack("pending_rereview", "c".repeat(40))).attention?.blocker,
+    "Seam re-review pending, no review running");
+  const running = seamStack("reviewing", "c".repeat(40), { agentRuns: [{ agent: "vortex", status: "reviewing", sha: head }] } as Partial<Layer>);
+  assert.equal(stackBlockers(running).attention, null);
 });
 
 test("a pending seam with no review running is a stack_status blocker", () => {
