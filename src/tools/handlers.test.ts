@@ -381,6 +381,7 @@ test("stack_status reads only its own stack queue and returns the wait loop bloc
     agents: expected.agents,
     repair: expected.repair,
     landGatePending: null,
+    queueWait: expected.queueWait,
     watch: stackWatchObligation({ stackId: "stack-9", terminal: null, cursor: { enrolledHeadSha: head }, freshCursor: true,
       attention: { prNumber: 7, blocker: "CI failed — lint" } }),
   });
@@ -1157,6 +1158,32 @@ test("stack_status appends the shared CI blocker label and preserves summary fie
   const result = await stackStatus("blocked-stack", cfg);
   assert.equal(statusLine(result.summary),
     "acme/widgets · 1 layer · restack: clean · auto-land on · auto-review off · blocked: #7 CI failed — unit tests");
+});
+
+test("stack_status reports a live merge-queue wait in its summary and data", async () => {
+  const stack = {
+    id: "waiting-stack", owner: "acme", repo: "widgets",
+    layers: [{ prNumber: 7, position: 1, state: "clean", ciStatus: "success" }],
+  };
+  const entry = {
+    id: "queue-entry", stackId: stack.id, owner: stack.owner, repo: stack.repo,
+    state: "waiting", position: 1, waitReason: "CI pending on abc1234", bounceReason: null,
+    bounceDetail: null, enqueuedBy: "agent", enqueuedVia: "cli",
+    enqueuedAt: new Date(Date.now() - 15 * 60_000).toISOString(), attempts: 1,
+    landedPrNumbers: [], verifyHeadSha: null, verifyBaseSha: null, finishedAt: null,
+    claimedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+  };
+  originalFetch ??= globalThis.fetch;
+  globalThis.fetch = async (input) => Response.json(
+    String(input).includes("/stacks/queue") ? { entries: [entry] } : { stacks: [stack] },
+  );
+  const result = await stackStatus(stack.id, cfg);
+  assert.match(statusLine(result.summary), /queue: #7 Merge queue waiting for 12m: CI pending on abc1234$/);
+  assert.deepEqual(result.data.queueWait, {
+    prNumber: 7, headSha: null,
+    text: "Merge queue waiting for 12m: CI pending on abc1234",
+    since: entry.claimedAt, waitReason: "CI pending on abc1234",
+  });
 });
 
 for (const scenario of ["current", "new head", "requeued", "different PR", "closed", "no SHA", "newer bounce"] as const) {

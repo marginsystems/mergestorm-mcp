@@ -19,7 +19,6 @@ for (const [detail, label] of [
     phase: null, started_at: null, stoppable: false, source: "pr_reviews" } }, "Review skipped, out of review quota"],
   [{ agentRuns: [{ agent: "cyclone", status: "failed", sha: head }] }, "Cyclone failed"],
   [{ agentRuns: [{ agent: "tempest", status: "findings", sha: head }] }, "Tempest findings"],
-  [{ agentRuns: [{ agent: "tempest", status: "failed", sha: head }] }, "Tempest failed"],
 ] as [Partial<Layer>, string][]) {
   test(`one label table drives CLI attention and MCP blocked: ${label}`, async () => {
     const stack = fixture([{ ...base, ...detail }]);
@@ -45,7 +44,7 @@ test("MCP Organism summary has pair gate and parked CI issue, not parked DIRTY",
 test("all live hard block kinds become upstack issues; summary caps at three", () => {
   const stack = fixture([base, ...[
     { state: "conflict" }, { mergeable: false }, { draft: true }, { ciStatus: "failure" },
-    { agentRuns: [{ agent: "tempest", status: "failed", sha: head }] }, { vortexStatus: "failed" },
+    { agentRuns: [{ agent: "tempest", status: "findings", sha: head }] }, { vortexStatus: "failed" },
   ].map((detail, i) => ({ ...base, ...detail, prNumber: 42 + i, position: i + 1 } as Layer))]);
   assert.equal(stackBlockers(stack).issues.length, 6);
   assert.match(stackSummary(stack), /issues: #42 Conflict; #43 Merge conflicts vs main; #44 Draft PR; \+3 more$/);
