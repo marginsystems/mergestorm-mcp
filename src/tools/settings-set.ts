@@ -33,15 +33,16 @@ export function settingsPatchFromArgs(
     const value = args[key];
     if (value === undefined) continue;
     const row = BEARER_SETTINGS.find((row) => row.key === key)!;
-    if ("kind" in row && row.kind === "seconds") {
+    if ("kind" in row && (row.kind === "seconds" || row.kind === "count")) {
       if (
         typeof value !== "number" ||
         !Number.isInteger(value) ||
         value < row.min ||
         value > row.max
       ) {
+        const unit = row.kind === "seconds" ? " of seconds" : "";
         throw new CommandError(
-          `${key} takes a whole number of seconds from ${row.min} through ${row.max}.`,
+          `${key} takes a whole number${unit} from ${row.min} through ${row.max}.`,
           2,
           "usage",
         );

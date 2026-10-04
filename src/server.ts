@@ -27,7 +27,7 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.9";
+export const MCP_SERVER_VERSION = "0.2.10";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -415,7 +415,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Get settings",
       description:
-        "Read the Bearer /api/v1/settings toggles, including auto_patch_enabled, auto_land_settle_seconds (how long Auto land waits before queueing), and cyclone_connected.",
+        "Read the Bearer /api/v1/settings toggles, including auto_patch_enabled, auto_land_settle_seconds (how long Auto land waits before queueing), merge_queue_batch_enabled and merge_queue_batch_size (whether the merge queue tests several pull requests on one CI run, and how many), and cyclone_connected.",
       annotations: { readOnlyHint: true },
     },
     async () => {
@@ -432,14 +432,14 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Update settings",
       description:
-        "Update writable Bearer /api/v1/settings values and return the stored result. At least one key is required. auto_land_settle_seconds is a whole number of seconds from 15 through 300; it applies to settle clocks that start after the write. cyclone_connected and github_connected are read-only and cannot be set.",
+        "Update writable Bearer /api/v1/settings values and return the stored result. At least one key is required. auto_land_settle_seconds is a whole number of seconds from 15 through 300; it applies to settle clocks that start after the write. merge_queue_batch_enabled turns merge queue batching on or off for the account, and merge_queue_batch_size is a whole number from 2 through 8. cyclone_connected and github_connected are read-only and cannot be set.",
       inputSchema: {
         ...Object.fromEntries(
           BEARER_SETTINGS.map((row) => [row.key,
             ("kind" in row
               ? row.kind === "logins"
                 ? z.array(z.string())
-                : row.kind === "seconds"
+                : row.kind === "seconds" || row.kind === "count"
                   ? z.number().int().min(row.min).max(row.max)
                   : z.enum(row.values)
               : z.boolean()).optional(),

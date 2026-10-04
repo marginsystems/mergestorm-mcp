@@ -718,6 +718,8 @@ const settingsBody = {
   vortex_seam_specialist_enabled: true,
   auto_land_default: false,
   auto_land_settle_seconds: 60,
+  merge_queue_batch_enabled: false,
+  merge_queue_batch_size: 4,
   cyclone_connected: true,
   github_connected: true,
 };
@@ -1086,6 +1088,30 @@ test("settings_set PATCHes auto_land_settle_seconds and rejects values outside 1
       (e: unknown) => e instanceof CommandError && e.code === "usage" && /15 through 300/.test(e.message),
     );
   }
+  assert.equal(calls, 1);
+});
+
+test("settings_set PATCHes merge queue batching and rejects a batch size outside 2 through 8", async () => {
+  originalFetch ??= globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (_input, init) => {
+    calls++;
+    assert.equal(init?.method, "PATCH");
+    assert.deepEqual(JSON.parse(String(init?.body)), { merge_queue_batch_enabled: true, merge_queue_batch_size: 6 });
+    return Response.json({ ...settingsBody, merge_queue_batch_enabled: true, merge_queue_batch_size: 6 });
+  };
+  const result = await settingsSet({ merge_queue_batch_enabled: true, merge_queue_batch_size: 6 }, cfg);
+  assert.equal(result.data.merge_queue_batch_enabled, true);
+  assert.equal(result.data.merge_queue_batch_size, 6);
+  for (const value of [1, 9, 3.5, "4", true]) {
+    await assert.rejects(
+      () => settingsSet({ merge_queue_batch_size: value }, cfg),
+      (err: unknown) =>
+        err instanceof Error && err.message === "merge_queue_batch_size takes a whole number from 2 through 8.",
+      String(value),
+    );
+  }
+  await assert.rejects(() => settingsSet({ merge_queue_batch_enabled: "on" }, cfg), /merge_queue_batch_enabled takes a boolean/);
   assert.equal(calls, 1);
 });
 
