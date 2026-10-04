@@ -1,6 +1,7 @@
 import {
   PrReviewPollTimeoutError,
   loadConfig,
+  noPrReviewYetMessage,
   pollPrVortexReview,
   type Config,
 } from "mergestorm/client";
@@ -62,7 +63,7 @@ export async function reviewWaitPr(
     );
   } catch (err) {
     if (err instanceof PrReviewPollTimeoutError) {
-      const status = "in_progress";
+      const status = err.reviewSeen ? "in_progress" : "none";
       const expectedSha = afterSha?.trim().toLowerCase() ?? "";
       const observedSha = err.lastEnvelope?.head_sha?.trim().toLowerCase() ?? "";
       const headShaMatches =
@@ -74,13 +75,16 @@ export async function reviewWaitPr(
       const findingCount = headShaMatches
         ? err.lastEnvelope?.finding_count ?? null
         : null;
+      const summary = prReviewSummary(target.owner, target.repo, target.prNumber, {
+        status,
+        head_sha: err.lastEnvelope?.head_sha ?? null,
+        finding_count: findingCount,
+        phase: err.lastEnvelope?.phase ?? null,
+      });
       return {
-        summary: prReviewSummary(target.owner, target.repo, target.prNumber, {
-          status,
-          head_sha: err.lastEnvelope?.head_sha ?? null,
-          finding_count: findingCount,
-          phase: err.lastEnvelope?.phase ?? null,
-        }),
+        summary: err.reviewSeen
+          ? summary
+          : `${summary} · ${noPrReviewYetMessage(target.owner, target.repo, target.prNumber, { afterSha, pass: opts.pass, afterPass: opts.afterPass })}`,
         data: {
           status,
           head_sha: err.lastEnvelope?.head_sha ?? null,

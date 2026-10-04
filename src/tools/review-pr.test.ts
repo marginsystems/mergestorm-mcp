@@ -194,6 +194,30 @@ describe("PR review tools", { concurrency: false }, () => {
     assert.match(String(result.data.error), /Timed out waiting/);
   });
 
+  test("review_wait_pr timeout with no review ever seen returns none and says what to do, not in_progress", async () => {
+    const urls = mockPrFetch([{ status: 404, body: { error: "not_found" } }]);
+
+    const result = await reviewWaitPr(
+      "acme",
+      "widgets",
+      12,
+      "abc123def456",
+      0.01,
+      cfg,
+      { pollIntervalMs: 1, afterPass: 1 },
+    );
+
+    assert.ok(urls.length >= 1);
+    assert.equal(result.data.status, "none");
+    assert.equal(result.data.head_sha, null);
+    assert.equal(result.data.pass, null);
+    assert.equal(result.data.finding_count, null);
+    assert.match(String(result.data.error), /^Timed out waiting for PR review acme\/widgets#12\. No Vortex pass after pass 1 exists for acme\/widgets#12 at abc123def456 yet\./);
+    assert.match(String(result.data.error), /comment "@mergestorm-vortex review" on the PR to run it, or review the branch locally with mg review/);
+    assert.match(result.summary, /^acme\/widgets#12 · none · No Vortex pass after pass 1 exists/);
+    assert.doesNotMatch(result.summary, /in_progress/);
+  });
+
   test("review_wait_pr timeout on a resting mismatched SHA stays in_progress and is not a completion", async () => {
     mockPrFetch([{
       status: 200,

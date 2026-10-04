@@ -27,7 +27,7 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.10";
+export const MCP_SERVER_VERSION = "0.2.11";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -226,7 +226,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Wait for GitHub PR Vortex review",
       description:
-        "Read the Vortex pass on a GitHub PR from the DB-only endpoint; review identity is head SHA + pass. timeout_s: 0 reads it once without polling; otherwise it polls for one 45s slice by default (max 300) and returns in_progress on timeout so you can call again. Pass after_sha for the head you pushed and pass to read one exact attempt; when you already hold a resting envelope for that head, also pass after_pass set to its pass and keep it unchanged across retries; never replace it with the pass of an in-progress envelope, and omit after_pass for a head you hold no envelope for. With timeout_s: 0, a pass that does not exist yet returns not_found, so after a push use a positive timeout. Do not pass 300; hosts drop long MCP calls. On rate_limited, wait retry_after_seconds before trying again. After a resting pass, verify each finding; prefer the smallest correct patch; if you skip, post a PR comment starting with mergestorm-loop: dismiss.",
+        "Read the Vortex pass on a GitHub PR from the DB-only endpoint; review identity is head SHA + pass. timeout_s: 0 reads it once without polling; otherwise it polls for one 45s slice by default (max 300) and returns in_progress on timeout so you can call again, or none when no review exists for that PR and head yet (call once more; if it is none again, Vortex is not reviewing that head: comment @mergestorm-vortex review on the PR, run mg review, or push a new commit). Pass after_sha for the head you pushed and pass to read one exact attempt; when you already hold a resting envelope for that head, also pass after_pass set to its pass and keep it unchanged across retries; never replace it with the pass of an in-progress envelope, and omit after_pass for a head you hold no envelope for. With timeout_s: 0, a pass that does not exist yet returns not_found, so after a push use a positive timeout. Do not pass 300; hosts drop long MCP calls. On rate_limited, wait retry_after_seconds before trying again. After a resting pass, verify each finding; prefer the smallest correct patch; if you skip, post a PR comment starting with mergestorm-loop: dismiss.",
       inputSchema: {
         owner: z.string().min(1),
         repo: z.string().min(1),
