@@ -50,6 +50,7 @@ export async function stackAdopt(input: StackAdoptInput, cfg?: Config): Promise<
         error: {
           code: err instanceof CommandError ? err.code ?? "stack_adopt_failed" : "stack_adopt_failed",
           message,
+          ...(err instanceof CommandError && err.reason !== undefined ? { reason: err.reason } : {}),
           ...(err instanceof CommandError && err.retryAfterSeconds !== undefined
             ? { retry_after_seconds: err.retryAfterSeconds } : {}),
         },

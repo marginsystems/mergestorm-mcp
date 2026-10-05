@@ -11,7 +11,7 @@ import {
 } from "mergestorm/client";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createMergestormMcpServer } from "../server.js";
+import { createMergestormMcpServer, fail } from "../server.js";
 import { credits } from "./credits.js";
 import { queueStatus } from "./queue-status.js";
 import { reviewList } from "./review-list.js";
@@ -401,7 +401,7 @@ test("stack_status reports a landed stack as done and drops the obligation", asy
       id: "stack-9", owner: "acme", repo: "widgets", trunkBranch: "mg-stack-4", archivedAt: null,
       layers: [{ prNumber: 7, position: 1, branch: "feature", state: "merged" }],
       unit: { id: "u", uNumber: 4, state: "landed", branch: "mg-stack-4", landTarget: "main", members: [],
-        landPrNumber: 90, tempestLandStatus: null, landingBlockReason: null, landPr: null },
+        landPrNumber: 90, landingBlockReason: null, landPr: null },
     }] });
   const result = await stackStatus("stack-9", cfg);
   const watch = result.data.watch as { done: boolean; reason: string; next: unknown };
@@ -733,6 +733,22 @@ test("settings_get returns the settings allowlist with an actionable summary", a
   assert.equal(result.data.cyclone_connected, true);
 });
 
+test("settings_get says whether stacks, the merge queue and Auto land are ready when the server reports it", async () => {
+  mockFetch(200, { ...settingsBody, cyclone_connected: false, stacks_ready: true });
+  const ready = await settingsGet(cfg);
+  assert.equal(
+    ready.summary,
+    "auto_patch off · Cyclone not connected (auto patch) · stacks, merge queue and Auto land ready",
+  );
+  assert.equal(ready.data.stacks_ready, true);
+
+  mockFetch(200, { ...settingsBody, stacks_ready: false });
+  assert.equal(
+    (await settingsGet(cfg)).summary,
+    "auto_patch off · Cyclone connected (auto patch) · stacks, merge queue and Auto land not ready (install Mergestorm Surge)",
+  );
+});
+
 test("settings_get surfaces auto_patch on in the summary", async () => {
   mockFetch(200, {
     ...settingsBody,
@@ -1019,6 +1035,40 @@ test("stack_adopt surfaces the Cyclone installation sentence and code", async ()
   assert.equal((result.data.error as { code: string }).code, "cyclone_not_installed");
 });
 
+test("stack_adopt surfaces the server's Surge message and reason under the published code", async () => {
+  const message =
+    "Install the Mergestorm Surge GitHub App to adopt this pull request. Surge is the write app: adopt, restack, the merge queue, and Auto land all run through it. Install it from Agents.";
+  mockFetch(400, { error: "cyclone_not_connected", reason: "surge_not_connected", message });
+  const result = await stackAdopt({ owner: "acme", repo: "widgets", pr_number: 42 }, cfg);
+  assert.equal(result.isError, true);
+  assert.equal(result.summary, message);
+  assert.deepEqual(result.data.error, { code: "cyclone_not_connected", message, reason: "surge_not_connected" });
+});
+
+test("the shared tool failure text carries a refusal's reason next to its code", () => {
+  const surge = new CommandError("Install Mergestorm Surge.", 1, "cyclone_not_connected", { reason: "surge_not_connected" });
+  assert.deepEqual(fail(surge), {
+    isError: true,
+    content: [
+      {
+        type: "text",
+        text: "Mergestorm request failed (cyclone_not_connected, reason surge_not_connected): Install Mergestorm Surge..",
+      },
+    ],
+  });
+  assert.equal(
+    fail(new CommandError("Connect Cyclone.", 1, "cyclone_not_connected")).content[0]!.text,
+    "Mergestorm request failed (cyclone_not_connected): Connect Cyclone..",
+  );
+});
+
+test("stack_adopt adds no reason to a Cyclone refusal", async () => {
+  const message = "Connect the Cyclone GitHub App to adopt this pull request.";
+  mockFetch(400, { error: "cyclone_not_connected", message });
+  const result = await stackAdopt({ owner: "acme", repo: "widgets", pr_number: 42 }, cfg);
+  assert.deepEqual(result.data.error, { code: "cyclone_not_connected", message });
+});
+
 test("stack_adopt returns rate-limit details from the API", async () => {
   mockFetch(429, { error: "rate_limited", retry_after_seconds: 9 }, { "Retry-After": "9" });
   const result = await stackAdopt({ owner: "acme", repo: "widgets", pr_number: 42 }, cfg);
@@ -1259,12 +1309,26 @@ test("stack_status reports a unit land gate blocker", async () => {
     id: "unit-gated-stack", owner: "acme", repo: "widgets", layers: [],
     unit: {
       state: "growing", landPrNumber: 99,
-      tempestLandStatus: "failed", landingBlockReason: "tempest_failed on land PR #99",
+      landingBlockReason: "ci_failure on land PR #99",
       members: [], landPr: { prNumber: 99, state: "clean" },
     },
   }] });
   const result = await stackStatus("unit-gated-stack", cfg);
-  assert.match(result.summary, /blocked: #99 tempest_failed on land PR #99$/);
+  assert.match(result.summary, /blocked: #99 ci_failure on land PR #99$/);
+});
+
+test("old server: stack_status names a Tempest land gate by the server's text and ignores tempestLandStatus and Tempest runs", async () => {
+  const unit = { state: "growing", landPrNumber: 99, tempestLandStatus: "failed", members: [],
+    landPr: { prNumber: 99, state: "clean", headSha: "aaaaaaa", tempestStatus: "findings",
+      agentRuns: [{ agent: "tempest", status: "findings", sha: "aaaaaaa" }] } };
+  mockFetch(200, { stacks: [{ id: "old-server-stack", owner: "acme", repo: "widgets", layers: [],
+    unit: { ...unit, landingBlockReason: "landing blocked: tempest_findings on land PR #99" } }] });
+  const blocked = await stackStatus("old-server-stack", cfg);
+  assert.match(blocked.summary, /blocked: #99 landing blocked: tempest_findings on land PR #99$/);
+  mockFetch(200, { stacks: [{ id: "old-server-stack", owner: "acme", repo: "widgets", layers: [],
+    unit: { ...unit, landingBlockReason: null } }] });
+  const quiet = await stackStatus("old-server-stack", cfg);
+  assert.doesNotMatch(quiet.summary, /blocked:|Tempest/i);
 });
 
 test("stack_status never lets a recoverable bounce suppress current-head project CI failure", async () => {
@@ -1328,7 +1392,6 @@ for (const [detail, label] of [
   [{ draft: true }, "Draft PR"],
   [{ state: "conflict" }, "Conflict"],
   [{ mergeable: false, mergeableHeadSha: "aaaaaaa" }, "Merge conflicts"],
-  [{ agentRuns: [{ agent: "tempest", status: "findings", sha: "aaaaaaa" }] }, "Tempest findings"],
 ] as const) {
   test(`stack_status names a hard blocker: ${label}`, async () => {
     mockFetch(200, { stacks: [{

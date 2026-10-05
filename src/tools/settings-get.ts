@@ -15,7 +15,11 @@ export function settingsSummary(settings: SettingsResponse): string {
   const cyclone = settings.cyclone_connected
     ? "Cyclone connected"
     : "Cyclone not connected";
-  return `auto_patch ${autoPatch} · ${cyclone}`;
+  if (typeof settings.stacks_ready !== "boolean") return `auto_patch ${autoPatch} · ${cyclone}`;
+  const stacks = settings.stacks_ready
+    ? "stacks, merge queue and Auto land ready"
+    : "stacks, merge queue and Auto land not ready (install Mergestorm Surge)";
+  return `auto_patch ${autoPatch} · ${cyclone} (auto patch) · ${stacks}`;
 }
 
 export async function settingsGet(cfg?: Config): Promise<ToolPayload> {

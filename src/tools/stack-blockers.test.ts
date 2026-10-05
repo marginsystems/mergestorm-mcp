@@ -17,8 +17,6 @@ for (const [detail, label] of [
   [{ vortexStatus: "failed" }, "Review failed"],
   [{ vortexStatus: "skipped", vortexReview: { status: "skipped", skip_reason: "quota_exceeded", pass: 1, head_sha: head,
     phase: null, started_at: null, stoppable: false, source: "pr_reviews" } }, "Review skipped, out of review quota"],
-  [{ agentRuns: [{ agent: "cyclone", status: "failed", sha: head }] }, "Cyclone failed"],
-  [{ agentRuns: [{ agent: "tempest", status: "findings", sha: head }] }, "Tempest findings"],
 ] as [Partial<Layer>, string][]) {
   test(`one label table drives CLI attention and MCP blocked: ${label}`, async () => {
     const stack = fixture([{ ...base, ...detail }]);
@@ -30,6 +28,16 @@ for (const [detail, label] of [
     if (detail.draft) assert.equal(result.bounceKind, "pr_draft");
   });
 }
+
+test("old server: a Tempest agent run on a layer is not a blocker in the CLI watch or the MCP summary", async () => {
+  const stack = fixture([{ ...base, agentRuns: [{ agent: "tempest", status: "findings", sha: head }] } as unknown as Layer]);
+  const result = await pollStackWatch({}, stack.id, { timeoutMs: 0,
+    fetch: async (_cfg, route) => ({ status: 200, body: route.includes("/stacks/queue") ? { entries: [] } : { stacks: [stack] } }),
+  });
+  assert.equal(result.blocker, null);
+  assert.deepEqual(result.busy, []);
+  assert.doesNotMatch(stackSummary(stack), /blocked:|Tempest/);
+});
 
 test("MCP Organism summary has pair gate and parked CI issue, not parked DIRTY", () => {
   const stack = fixture([base,
@@ -44,10 +52,10 @@ test("MCP Organism summary has pair gate and parked CI issue, not parked DIRTY",
 test("all live hard block kinds become upstack issues; summary caps at three", () => {
   const stack = fixture([base, ...[
     { state: "conflict" }, { mergeable: false }, { draft: true }, { ciStatus: "failure" },
-    { agentRuns: [{ agent: "tempest", status: "findings", sha: head }] }, { vortexStatus: "failed" },
+    { vortexStatus: "failed" },
   ].map((detail, i) => ({ ...base, ...detail, prNumber: 42 + i, position: i + 1 } as Layer))]);
-  assert.equal(stackBlockers(stack).issues.length, 6);
-  assert.match(stackSummary(stack), /issues: #42 Conflict; #43 Merge conflicts vs main; #44 Draft PR; \+3 more$/);
+  assert.equal(stackBlockers(stack).issues.length, 5);
+  assert.match(stackSummary(stack), /issues: #42 Conflict; #43 Merge conflicts vs main; #44 Draft PR; \+2 more$/);
 });
 
 test("layers below the current candidate are not reported as upstack issues", () => {

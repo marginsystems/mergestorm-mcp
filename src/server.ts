@@ -27,7 +27,7 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.11";
+export const MCP_SERVER_VERSION = "0.2.12";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -79,11 +79,11 @@ function ok(payload: ToolPayload) {
   };
 }
 
-function fail(err: unknown) {
+export function fail(err: unknown) {
   const message =
     err instanceof CommandError
       ? err.code
-        ? `Mergestorm request failed (${err.code}): ${err.message}.`
+        ? `Mergestorm request failed (${err.code}${err.reason ? `, reason ${err.reason}` : ""}): ${err.message}.`
         : err.message
       : err instanceof Error
         ? err.message
@@ -291,7 +291,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Adopt PR stack",
       description:
-        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land is boolean; auto_review and auto_patch accept true, false, or null, where null clears the override. Omitted auto_land seeds from auto_land_default; omitted auto_review and auto_patch overrides are not seeded. Never changes account settings. Adoption requires a Cyclone GitHub App install; without it the API returns cyclone_not_connected — do not retry, tell the human. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership. With 2+ PRs, adopt moves the bottom PR's GitHub base to mg-stack-<n> and parks PR3+ on an mg-park-* freeze; a 1-PR stack stays on main. Leave those bases. Never retarget the bottom back to main." + STACK_WATCH_RESULT_NOTE,
+        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land is boolean; auto_review and auto_patch accept true, false, or null, where null clears the override. Omitted auto_land seeds from auto_land_default; omitted auto_review and auto_patch overrides are not seeded. Never changes account settings. Adoption needs the infrastructure GitHub App on the repository: Mergestorm Surge, or Cyclone on accounts not yet moved to Surge. Stacks, the merge queue and Auto land run through that App; Cyclone is the auto-patch App. Without it the API returns cyclone_not_connected or cyclone_not_installed; the message, and error.reason starting with surge_ when Surge is the one to install, say which App is missing — do not retry, tell the human what the message says. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership. With 2+ PRs, adopt moves the bottom PR's GitHub base to mg-stack-<n> and parks PR3+ on an mg-park-* freeze; a 1-PR stack stays on main. Leave those bases. Never retarget the bottom back to main." + STACK_WATCH_RESULT_NOTE,
       inputSchema: stackAdoptSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
@@ -415,7 +415,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Get settings",
       description:
-        "Read the Bearer /api/v1/settings toggles, including auto_patch_enabled, auto_land_settle_seconds (how long Auto land waits before queueing), merge_queue_batch_enabled and merge_queue_batch_size (whether the merge queue tests several pull requests on one CI run, and how many), and cyclone_connected.",
+        "Read the Bearer /api/v1/settings toggles, including auto_patch_enabled, auto_land_settle_seconds (how long Auto land waits before queueing), merge_queue_batch_enabled and merge_queue_batch_size (whether the merge queue tests several pull requests on one CI run, and how many), cyclone_connected (the Cyclone auto-patch App), and, when the server sends it, stacks_ready (whether stacks, the merge queue and Auto land can run for this account, through Mergestorm Surge or, on accounts not yet moved, Cyclone).",
       annotations: { readOnlyHint: true },
     },
     async () => {
