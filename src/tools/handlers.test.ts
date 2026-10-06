@@ -96,6 +96,13 @@ test("whoami returns key prefix and plan without a job envelope", async () => {
   assert.equal(result.data.schema, undefined);
 });
 
+test("whoami reports the running server version so a stale MCP process is visible", async () => {
+  mockFetch(200, meBody);
+  const result = await whoami(cfg, "9.9.9");
+  assert.equal(result.data.mcp_server_version, "9.9.9");
+  assert.match(result.summary, /mergestorm-mcp 9\.9\.9/);
+});
+
 test("whoami throws when no API key is configured", async () => {
   originalApiKey = process.env.MERGESTORM_API_KEY;
   delete process.env.MERGESTORM_API_KEY;

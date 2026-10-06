@@ -27,7 +27,7 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.13";
+export const MCP_SERVER_VERSION = "0.2.14";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -122,12 +122,12 @@ export function createMergestormMcpServer(): McpServer {
     "whoami",
     {
       title: "Who am I",
-      description: "Current Mergestorm API key prefix, plan, and API base.",
+      description: "Current Mergestorm API key prefix, plan, API base, and the version of this running mergestorm-mcp server.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async () => {
       try {
-        return ok(await whoami());
+        return ok(await whoami(undefined, MCP_SERVER_VERSION));
       } catch (err) {
         return fail(err);
       }
@@ -262,7 +262,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Dismiss Vortex findings",
       description:
-        "Record an audited dismissal of Vortex findings you verified are wrong or not actionable on a GitHub PR. Identity is exact: head_sha must be the PR's live head, review_id a Vortex review (Core or seam) made at that head, and finding_ids the GitHub review comment ids of that review (offdiff-<n> for a body-only finding), or scope \"review\" with no finding_ids to dismiss every finding of that review. reason must say why (at least 20 characters); evidence_url is optional. Call with preview: true first to list the review's finding ids and the seam gate without writing. The caller's linked GitHub account needs write access to the repository. A moved head, another review, an unknown id or a missing permission is refused and nothing is written. Retries are idempotent. The seam gate clears only when every finding of that integration review is dismissed; CI, other reviews and Auto land policy are unchanged. Vortex does not raise a dismissed finding again on the same diff. Never dismiss a finding you did not check." + STACK_WATCH_RESULT_NOTE,
+        "Record an audited dismissal of Vortex findings you verified are wrong or not actionable on a GitHub PR. Identity is exact: head_sha must be the PR's live head, review_id a Vortex review (Core or seam) made at that head, and finding_ids the GitHub review comment ids of that review (offdiff-<n> for a body-only finding), or scope \"review\" with no finding_ids to dismiss every finding of that review. reason must say why (at least 20 characters); evidence_url is optional. Call with preview: true first to list the review's finding ids and the seam gate without writing. The caller's linked GitHub account needs write access to the repository. A moved head, another review, an unknown id or a missing permission is refused and nothing is written. Retries are idempotent. The seam gate clears only when every finding of that integration review is dismissed; the Vortex gate at the head clears only once every Vortex Blocker (error finding) at that head is dismissed and no Vortex review of it is running (gate.vortex.cleared, else gate.vortex.message); CI and Auto land policy are unchanged. Vortex does not raise a dismissed finding again on the same diff. Never dismiss a finding you did not check." + STACK_WATCH_RESULT_NOTE,
       inputSchema: {
         owner: z.string().min(1),
         repo: z.string().min(1),

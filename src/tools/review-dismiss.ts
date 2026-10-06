@@ -49,6 +49,12 @@ export function reviewDismissSummary(result: PrFindingDismissResult): string {
           : `Seam gate not blocking (seam_state=${seam.state}).`,
     );
   }
+  const vortex = result.gate.vortex;
+  if (vortex?.cleared) {
+    lines.push("Vortex gate cleared at this head: every Vortex Blocker (error finding) at this head is dismissed. CI and Auto land policy are unchanged.");
+  } else if (vortex?.message && vortex.reason !== "review_findings_open") {
+    lines.push(`Vortex gate not cleared: ${vortex.message}`);
+  }
   return lines.join("\n");
 }
 

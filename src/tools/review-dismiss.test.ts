@@ -105,6 +105,42 @@ test("review_dismiss preview without a stack lists findings and carries no watch
   assert.equal(payload.data.watch, undefined);
 });
 
+test("review_dismiss says when a Core review's dismissal cleared the Vortex gate", async () => {
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json({
+      ...result,
+      review_kind: "core",
+      gate: { seam: null, vortex: { cleared: true }, other_gates: "unchanged" },
+      stack_id: null,
+    });
+  const payload = await reviewDismiss(
+    { owner: "o", repo: "r", pr_number: 1, head_sha: HEAD, review_id: 5, scope: "review", reason: "every finding here was verified wrong" },
+    cfg,
+  );
+  assert.match(payload.summary, /Vortex gate cleared at this head/);
+});
+
+test("review_dismiss says why a Core review's dismissal left the Vortex gate shut", async () => {
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json({
+      ...result,
+      review_kind: "core",
+      gate: {
+        seam: null,
+        vortex: { cleared: false, reason: "coverage_incomplete", message: "Vortex has not reviewed every file at this head yet." },
+        other_gates: "unchanged",
+      },
+      stack_id: null,
+    });
+  const payload = await reviewDismiss(
+    { owner: "o", repo: "r", pr_number: 1, head_sha: HEAD, review_id: 5, scope: "review", reason: "every finding here was verified wrong" },
+    cfg,
+  );
+  assert.match(payload.summary, /Vortex gate not cleared: Vortex has not reviewed every file at this head yet\./);
+});
+
 test("MCP review_dismiss rejects a short head SHA before calling the API", async () => {
   originalFetch = globalThis.fetch;
   let calls = 0;

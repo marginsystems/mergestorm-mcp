@@ -9,7 +9,7 @@ import {
 } from "mergestorm/client";
 import type { ToolPayload } from "./types.js";
 
-export async function whoami(cfg?: Config): Promise<ToolPayload> {
+export async function whoami(cfg?: Config, serverVersion?: string): Promise<ToolPayload> {
   const resolved = cfg ?? (await loadConfig());
   const key = resolveApiKey(resolved);
   if (!key) {
@@ -31,10 +31,11 @@ export async function whoami(cfg?: Config): Promise<ToolPayload> {
     api_base: apiBase(resolved),
     config_path: configPath(),
     usage: me.usage ?? null,
+    mcp_server_version: serverVersion ?? null,
   };
   const plan = data.plan_label_key ?? data.plan_key ?? "unknown plan";
   return {
-    summary: `${data.key_prefix} · ${plan}`,
+    summary: `${data.key_prefix} · ${plan}${serverVersion ? ` · mergestorm-mcp ${serverVersion}` : ""}`,
     data,
   };
 }
