@@ -60,7 +60,7 @@ function stackWaitStatusLine(envelope: StackWatchEnvelope): string {
     ...(envelope.cursor.afterFinishedAt !== undefined ? [`after_finished_at ${JSON.stringify(envelope.cursor.afterFinishedAt)}`] : []),
     ...(envelope.cursor.bounceId !== undefined ? [`bounce_id ${JSON.stringify(envelope.cursor.bounceId)}`] : []),
   ];
-  return `${base} · watch not finished: run ${stackWatchBackgroundCommand(envelope.stackId)} as a background command and end your turn, or call stack_wait again with timeout_s 45 and the same cursor: ${selectors.join(", ")}`;
+  return `${base} · watch not finished: only with a confirmed host notification that resumes this task, run ${stackWatchBackgroundCommand(envelope.stackId)} as a background command and end your turn; otherwise call stack_wait again with timeout_s 45 and the same cursor: ${selectors.join(", ")}`;
 }
 
 export async function stackWait(

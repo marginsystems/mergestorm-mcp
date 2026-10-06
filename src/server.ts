@@ -27,7 +27,7 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.12";
+export const MCP_SERVER_VERSION = "0.2.13";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -55,27 +55,16 @@ export const MCP_SERVER_INSTRUCTIONS = [
 ].join("\n\n");
 
 const STACK_WATCH_RESULT_NOTE =
-  " The result carries watch {done, until: \"landed\", reason, next, message}: while watch.done is false the stack is not landed and your task is not done; call stack_wait with watch.next.args, or run watch.next.background as a background command and end your turn.";
-
-function stripNulls(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => stripNulls(item));
-  }
-  if (value !== null && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      if (val !== null && val !== undefined) out[key] = stripNulls(val);
-    }
-    return out;
-  }
-  return value;
-}
+  " Follow watch.next.args until watch.done; background watching requires a confirmed host notification. See server instructions.";
 
 function ok(payload: ToolPayload) {
   return {
     ...(payload.isError ? { isError: true } : {}),
-    content: [{ type: "text" as const, text: payload.summary }],
-    structuredContent: stripNulls(payload.data) as Record<string, unknown>,
+    content: [
+      { type: "text" as const, text: payload.summary },
+      { type: "text" as const, text: JSON.stringify(payload.data) },
+    ],
+    structuredContent: payload.data,
   };
 }
 
@@ -88,10 +77,21 @@ export function fail(err: unknown) {
       : err instanceof Error
         ? err.message
         : String(err);
-  return {
+  return ok({
     isError: true,
-    content: [{ type: "text" as const, text: message }],
-  };
+    summary: message,
+    data: {
+      error: {
+        message: err instanceof Error ? err.message : String(err),
+        ...(err instanceof CommandError ? {
+          exit_code: err.exitCode,
+          ...(err.code !== undefined ? { code: err.code } : {}),
+          ...(err.reason !== undefined ? { reason: err.reason } : {}),
+          ...(err.retryAfterSeconds !== undefined ? { retry_after_seconds: err.retryAfterSeconds } : {}),
+        } : {}),
+      },
+    },
+  });
 }
 
 export function createMergestormMcpServer(): McpServer {
@@ -123,7 +123,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Who am I",
       description: "Current Mergestorm API key prefix, plan, and API base.",
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async () => {
       try {
@@ -139,7 +139,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Credits",
       description: "Current standard-credit usage and reset time.",
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async () => {
       try {
@@ -158,7 +158,7 @@ export function createMergestormMcpServer(): McpServer {
       inputSchema: {
         limit: z.number().int().min(1).max(50).optional(),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ limit }) => {
       try {
@@ -210,7 +210,7 @@ export function createMergestormMcpServer(): McpServer {
         job_id: z.string().min(1),
         timeout_s: z.number().min(0).max(300).optional(),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ job_id, timeout_s }) => {
       try {
@@ -236,7 +236,7 @@ export function createMergestormMcpServer(): McpServer {
         after_pass: z.number().int().min(1).optional(),
         timeout_s: z.number().min(0).max(300).optional(),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ owner, repo, pr_number, after_sha, pass, after_pass, timeout_s }) => {
       try {
@@ -275,7 +275,7 @@ export function createMergestormMcpServer(): McpServer {
         evidence_url: z.string().url().optional(),
         preview: z.boolean().optional(),
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
     async (args) => {
       try {
@@ -291,9 +291,9 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Adopt PR stack",
       description:
-        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land is boolean; auto_review and auto_patch accept true, false, or null, where null clears the override. Omitted auto_land seeds from auto_land_default; omitted auto_review and auto_patch overrides are not seeded. Never changes account settings. Adoption needs the infrastructure GitHub App on the repository: Mergestorm Surge, or Cyclone on accounts not yet moved to Surge. Stacks, the merge queue and Auto land run through that App; Cyclone is the auto-patch App. Without it the API returns cyclone_not_connected or cyclone_not_installed; the message, and error.reason starting with surge_ when Surge is the one to install, say which App is missing — do not retry, tell the human what the message says. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership. With 2+ PRs, adopt moves the bottom PR's GitHub base to mg-stack-<n> and parks PR3+ on an mg-park-* freeze; a 1-PR stack stays on main. Leave those bases. Never retarget the bottom back to main." + STACK_WATCH_RESULT_NOTE,
+        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land is boolean; auto_review and auto_patch accept true, false, or null, where null clears the override. Omitted auto_land seeds from auto_land_default; omitted auto_review and auto_patch overrides are not seeded. Never changes account settings. Adoption needs the Mergestorm Surge GitHub App on the repository. Stacks, the merge queue and Auto land run through that App; Cyclone is the auto-patch App. Without it the API returns cyclone_not_connected or cyclone_not_installed; the message, and error.reason starting with surge_ when Surge is the one to install, say which App is missing — do not retry, tell the human what the message says. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership. With 2+ PRs, adopt moves the bottom PR's GitHub base to mg-stack-<n> and parks PR3+ on an mg-park-* freeze; a 1-PR stack stays on main. Leave those bases. Never retarget the bottom back to main." + STACK_WATCH_RESULT_NOTE,
       inputSchema: stackAdoptSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
       try {
@@ -310,7 +310,7 @@ export function createMergestormMcpServer(): McpServer {
       title: "List stacks",
       description:
         "List the current user's Mergestorm stacks.",
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async () => {
       try {
@@ -333,7 +333,7 @@ export function createMergestormMcpServer(): McpServer {
         auto_review: z.boolean().nullable().optional(),
         auto_patch: z.boolean().nullable().optional(),
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
     async ({ stack_id, auto_land, auto_review, auto_patch }) => {
       try {
@@ -359,7 +359,7 @@ export function createMergestormMcpServer(): McpServer {
       inputSchema: {
         stack_id: z.string().min(1),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ stack_id }) => {
       try {
@@ -377,13 +377,12 @@ export function createMergestormMcpServer(): McpServer {
       description:
         "Wait for a stack to need attention. Returns a mergestorm.stack_watch/v1 envelope; timeout_s: 0 returns one snapshot and timeout_s: 1-45 waits up to that many seconds, returning the current status (waiting or in_progress) if a snapshot was read and no attention is found. A timeout with either of those statuses is not a failure; waiting and in_progress end this slice, and the next call is stack_wait again with the same cursor. A timeout of failed means no assessment was produced. A stack that no longer exists returns status failed with watch.done true (reason not_found) and is not an error. While Cyclone or Vortex is still working on the blocked PR it returns in_progress, not attention, with busy[] naming the PR, blocker, and agent; agents carries that PR's vortexStatus, cycloneStatus, vortexReview, and busy flags. A blocker no agent run clears (a merge conflict vs the live parent, a restack Conflict or Restack failed, a Draft PR, a seam review pending with no review running, \"Seam review stuck in reviewing, no review running\", \"Seam re-review pending, no review running\", \"Seam verdict is for an older head, no review running\", or a review skipped for review quota) is still named during that in_progress, in blocker, prNumber, headSha, and issues[], with actAfter: \"agents_idle\" and waitingOn listing the busy agents: plan the fix, and act when a snapshot after the agents finish returns attention, re-reading the blocker then. Blockers the agents can change keep blocker and actAfter null. Attention never calls for changing a PR's GitHub base. When present, repair names the concrete fix for attention (restack_conflict and merge_conflict carry liveParent, never mg-park-*). For the three stuck-seam blockers, repair kind seam_review_stuck: do not patch or push; tell the human to click Continue, which re-queues the seam review at the live head. A pending land gate (landGatePending) returns in_progress, not attention. Auto land off after a merge_failed, gh_error, or ci_timeout bounce (the stack's autoLandOff reads reason bounced) returns attention with the blocker \"Auto land off after <kind> bounce\", the bounce in issues[], and a repair of kind auto_land_off: fix the cause, then turn Auto land back on or enqueue. A Vortex request_changes handoff at the live head returns attention with blocker \"Vortex findings need a person\" and repair kind vortex_findings; verify its findings against the live head." + STACK_WATCH_RESULT_NOTE,
       inputSchema: stackWaitSchema,
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async (args, extra) => {
       try {
         const payload = await stackWait(args, undefined, { signal: extra.signal });
-        // Preserve the versioned envelope, including nullable cursor fields.
-        return { ...ok(payload), structuredContent: payload.data };
+        return ok(payload);
       } catch (err) {
         return fail(err);
       }
@@ -399,7 +398,7 @@ export function createMergestormMcpServer(): McpServer {
       inputSchema: {
         stack_id: z.string().min(1).optional(),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ stack_id }) => {
       try {
@@ -415,8 +414,8 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Get settings",
       description:
-        "Read the Bearer /api/v1/settings toggles, including auto_patch_enabled, auto_land_settle_seconds (how long Auto land waits before queueing), merge_queue_batch_enabled and merge_queue_batch_size (whether the merge queue tests several pull requests on one CI run, and how many), cyclone_connected (the Cyclone auto-patch App), and, when the server sends it, stacks_ready (whether stacks, the merge queue and Auto land can run for this account, through Mergestorm Surge or, on accounts not yet moved, Cyclone).",
-      annotations: { readOnlyHint: true },
+        "Read the Bearer /api/v1/settings toggles, including auto_patch_enabled, auto_land_settle_seconds (how long Auto land waits before queueing), merge_queue_batch_enabled and merge_queue_batch_size (whether the merge queue tests several pull requests on one CI run, and how many), cyclone_connected (the Cyclone auto-patch App), and stacks_ready (whether stacks, the merge queue and Auto land can run for this account, which needs Mergestorm Surge).",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async () => {
       try {
@@ -449,7 +448,7 @@ export function createMergestormMcpServer(): McpServer {
         cyclone_connected: z.unknown().optional(),
         github_connected: z.unknown().optional(),
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
       try {

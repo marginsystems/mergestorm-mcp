@@ -59,7 +59,7 @@ test("stack_wait timeout returns waiting, preserving the last cursor", async () 
   assert.deepEqual(result.data, last);
   assert.equal(
     body(result.summary),
-    "Stack stack-1 · waiting · watch not finished: run mg stack watch stack-1 as a background command and end your turn, or call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha \"old-head\"",
+    "Stack stack-1 · waiting · watch not finished: only with a confirmed host notification that resumes this task, run mg stack watch stack-1 as a background command and end your turn; otherwise call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha \"old-head\"",
   );
   assert.notEqual(result.isError, true);
 });
@@ -78,7 +78,7 @@ test("stack_wait in_progress summary keeps blockers and prints explicit null sel
   });
   assert.equal(
     body(result.summary),
-    "Stack stack-1 · in_progress · issues: #13 CI failed · assessment unavailable · watch not finished: run mg stack watch stack-1 as a background command and end your turn, or call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha null, after_finished_at null, bounce_id \"bounce-1\"",
+    "Stack stack-1 · in_progress · issues: #13 CI failed · assessment unavailable · watch not finished: only with a confirmed host notification that resumes this task, run mg stack watch stack-1 as a background command and end your turn; otherwise call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha null, after_finished_at null, bounce_id \"bounce-1\"",
   );
 });
 

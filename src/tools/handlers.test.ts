@@ -947,7 +947,7 @@ test("MCP whoami returns an error payload when live account details are unavaila
     await client.connect(clientTransport);
     const result = await client.callTool({ name: "whoami", arguments: {} });
     assert.equal(result.isError, true);
-    assert.equal(result.structuredContent, undefined);
+    assert.deepEqual(result.structuredContent, { error: { message: "Live account details unavailable. Could not verify account with /me.", exit_code: 1 } });
     assert.match(JSON.stringify(result.content), /Live account details unavailable/);
     assert.doesNotMatch(JSON.stringify(result), /key_prefix|usage/);
   } finally {
@@ -1018,7 +1018,11 @@ test("stack_adopt returns a structured API failure", async () => {
   const result = await stackAdopt({ owner: "acme", repo: "widgets", pr_number: 42 }, cfg);
   assert.equal(result.isError, true);
   assert.match(result.summary, /Failed to import stack.*503/);
-  assert.equal((result.data.error as { code: string }).code, "busy");
+  assert.deepEqual(result.data.error, {
+    code: "busy",
+    message: result.summary,
+    exit_code: 1,
+  });
 });
 
 test("stack_adopt surfaces the Cyclone installation sentence and code", async () => {
@@ -1042,19 +1046,26 @@ test("stack_adopt surfaces the server's Surge message and reason under the publi
   const result = await stackAdopt({ owner: "acme", repo: "widgets", pr_number: 42 }, cfg);
   assert.equal(result.isError, true);
   assert.equal(result.summary, message);
-  assert.deepEqual(result.data.error, { code: "cyclone_not_connected", message, reason: "surge_not_connected" });
+  assert.deepEqual(result.data.error, {
+    code: "cyclone_not_connected",
+    message,
+    exit_code: 1,
+    reason: "surge_not_connected",
+  });
 });
 
 test("the shared tool failure text carries a refusal's reason next to its code", () => {
   const surge = new CommandError("Install Mergestorm Surge.", 1, "cyclone_not_connected", { reason: "surge_not_connected" });
-  assert.deepEqual(fail(surge), {
-    isError: true,
-    content: [
-      {
-        type: "text",
-        text: "Mergestorm request failed (cyclone_not_connected, reason surge_not_connected): Install Mergestorm Surge..",
-      },
-    ],
+  const result = fail(surge);
+  assert.equal(result.isError, true);
+  assert.equal(result.content[0]!.text, "Mergestorm request failed (cyclone_not_connected, reason surge_not_connected): Install Mergestorm Surge..");
+  assert.deepEqual(result.structuredContent, {
+    error: {
+      code: "cyclone_not_connected",
+      message: "Install Mergestorm Surge.",
+      exit_code: 1,
+      reason: "surge_not_connected",
+    },
   });
   assert.equal(
     fail(new CommandError("Connect Cyclone.", 1, "cyclone_not_connected")).content[0]!.text,
@@ -1066,7 +1077,7 @@ test("stack_adopt adds no reason to a Cyclone refusal", async () => {
   const message = "Connect the Cyclone GitHub App to adopt this pull request.";
   mockFetch(400, { error: "cyclone_not_connected", message });
   const result = await stackAdopt({ owner: "acme", repo: "widgets", pr_number: 42 }, cfg);
-  assert.deepEqual(result.data.error, { code: "cyclone_not_connected", message });
+  assert.deepEqual(result.data.error, { code: "cyclone_not_connected", message, exit_code: 1 });
 });
 
 test("stack_adopt returns rate-limit details from the API", async () => {
