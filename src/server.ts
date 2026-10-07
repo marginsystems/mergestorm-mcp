@@ -27,7 +27,7 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.14";
+export const MCP_SERVER_VERSION = "0.2.15";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -291,7 +291,7 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Adopt PR stack",
       description:
-        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land is boolean; auto_review and auto_patch accept true, false, or null, where null clears the override. Omitted auto_land seeds from auto_land_default; omitted auto_review and auto_patch overrides are not seeded. Never changes account settings. Adoption needs the Mergestorm Surge GitHub App on the repository. Stacks, the merge queue and Auto land run through that App; Cyclone is the auto-patch App. Without it the API returns cyclone_not_connected or cyclone_not_installed; the message, and error.reason starting with surge_ when Surge is the one to install, say which App is missing — do not retry, tell the human what the message says. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership. With 2+ PRs, adopt moves the bottom PR's GitHub base to mg-stack-<n> and parks PR3+ on an mg-park-* freeze; a 1-PR stack stays on main. Leave those bases. Never retarget the bottom back to main." + STACK_WATCH_RESULT_NOTE,
+        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land is boolean; auto_review, auto_patch, auto_resolve_conflicts, and auto_fix_ci accept true, false, or null, where null clears the override. Omitted auto_land seeds from auto_land_default; omitted overrides are not seeded. Never changes account settings. Adoption needs the Mergestorm Surge GitHub App on the repository. Stacks, the merge queue and Auto land run through that App; Cyclone is the auto-patch App. Without it the API returns cyclone_not_connected or cyclone_not_installed; the message, and error.reason starting with surge_ when Surge is the one to install, say which App is missing — do not retry, tell the human what the message says. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership. With 2+ PRs, adopt moves the bottom PR's GitHub base to mg-stack-<n> and parks PR3+ on an mg-park-* freeze; a 1-PR stack stays on main. Leave those bases. Never retarget the bottom back to main." + STACK_WATCH_RESULT_NOTE,
       inputSchema: stackAdoptSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
@@ -326,22 +326,26 @@ export function createMergestormMcpServer(): McpServer {
     {
       title: "Set stack policy",
       description:
-        "Set per-stack automation on one owned Mergestorm stack: auto_land arms or disarms Auto land; auto_review and auto_patch pin Vortex auto-review or Cyclone auto-patch for this stack only (true or false), and null clears the pin so the stack follows the account setting again. Pass at least one key. Never changes account settings." + STACK_WATCH_RESULT_NOTE,
+        "Set per-stack automation on one owned Mergestorm stack: auto_land arms or disarms Auto land; auto_review, auto_patch, auto_resolve_conflicts, and auto_fix_ci pin Vortex auto-review, Cyclone auto-patch, Auto-resolve merge conflicts, or Auto-fix failing CI for this stack only (true or false), and null clears the pin so the stack follows the account setting again. Pass at least one key. Never changes account settings." + STACK_WATCH_RESULT_NOTE,
       inputSchema: {
         stack_id: z.string().min(1),
         auto_land: z.boolean().optional(),
         auto_review: z.boolean().nullable().optional(),
         auto_patch: z.boolean().nullable().optional(),
+        auto_resolve_conflicts: z.boolean().nullable().optional(),
+        auto_fix_ci: z.boolean().nullable().optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
-    async ({ stack_id, auto_land, auto_review, auto_patch }) => {
+    async ({ stack_id, auto_land, auto_review, auto_patch, auto_resolve_conflicts, auto_fix_ci }) => {
       try {
         return ok(
           await stackSet(stack_id, {
             ...(auto_land !== undefined ? { auto_land } : {}),
             ...(auto_review !== undefined ? { auto_review } : {}),
             ...(auto_patch !== undefined ? { auto_patch } : {}),
+            ...(auto_resolve_conflicts !== undefined ? { auto_resolve_conflicts } : {}),
+            ...(auto_fix_ci !== undefined ? { auto_fix_ci } : {}),
           }),
         );
       } catch (err) {

@@ -7,7 +7,7 @@ import {
   stackWatchObligation,
   type StackWatchEnvelope,
 } from "mergestorm/client";
-import { stackWait } from "./stack-wait.js";
+import { repairSummary, stackWait } from "./stack-wait.js";
 
 const openWatch = stackWatchObligation({ stackId: "stack-1", terminal: null, cursor: { enrolledHeadSha: "old-head" } });
 const envelope: StackWatchEnvelope = {
@@ -235,4 +235,13 @@ test("a failed read keeps the obligation and stays an error", async () => {
   assert.equal(result.isError, true);
   assert.equal((result.data as StackWatchEnvelope).watch.reason, "failed");
   assert.ok(result.summary.startsWith(STACK_WATCH_NOT_DONE_SENTENCE));
+});
+
+test("stack_wait repair summary prints a conflict note after the steps", () => {
+  const repair = {
+    kind: "merge_conflict" as const, prNumber: 7, headSha: "abc", branch: "feat/a", liveParent: "main", files: ["a.ts"],
+    steps: "Merge main into feat/a.", note: "Cyclone will not resolve this conflict by itself.",
+  };
+  assert.equal(repairSummary(repair), "\nRepair #7 (merge_conflict). Files: a.ts. Merge main into feat/a. Cyclone will not resolve this conflict by itself.");
+  assert.equal(repairSummary({ ...repair, note: undefined }), "\nRepair #7 (merge_conflict). Files: a.ts. Merge main into feat/a.");
 });

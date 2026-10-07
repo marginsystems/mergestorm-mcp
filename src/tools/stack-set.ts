@@ -11,6 +11,8 @@ export type StackSetInput = {
   auto_land?: boolean;
   auto_review?: boolean | null;
   auto_patch?: boolean | null;
+  auto_resolve_conflicts?: boolean | null;
+  auto_fix_ci?: boolean | null;
 };
 
 function triWord(value: boolean | null): string {
@@ -22,6 +24,10 @@ export function stackSetPatch(input: StackSetInput): StackPolicyPatch {
   if (typeof input.auto_land === "boolean") patch.autoEnqueueWhenReady = input.auto_land;
   if (input.auto_review !== undefined) patch.autoReviewOverride = input.auto_review;
   if (input.auto_patch !== undefined) patch.autoPatchOverride = input.auto_patch;
+  if (input.auto_resolve_conflicts !== undefined) {
+    patch.autoResolveConflictsOverride = input.auto_resolve_conflicts;
+  }
+  if (input.auto_fix_ci !== undefined) patch.autoFixCiOverride = input.auto_fix_ci;
   return patch;
 }
 
@@ -33,12 +39,14 @@ export async function stackSet(
   const patch = stackSetPatch(input);
   if (Object.keys(patch).length === 0) {
     return {
-      summary: "stack_set needs at least one of auto_land, auto_review, auto_patch",
+      summary:
+        "stack_set needs at least one of auto_land, auto_review, auto_patch, auto_resolve_conflicts, auto_fix_ci",
       isError: true,
       data: {
         error: {
           code: "invalid_input",
-          message: "Pass at least one of auto_land, auto_review, auto_patch.",
+          message:
+            "Pass at least one of auto_land, auto_review, auto_patch, auto_resolve_conflicts, auto_fix_ci.",
           stack_id: stackId,
         },
       },
@@ -55,6 +63,12 @@ export async function stackSet(
   if (input.auto_patch !== undefined) {
     parts.push(`auto-patch ${triWord(input.auto_patch)}`);
   }
+  if (input.auto_resolve_conflicts !== undefined) {
+    parts.push(`auto-resolve-conflicts ${triWord(input.auto_resolve_conflicts)}`);
+  }
+  if (input.auto_fix_ci !== undefined) {
+    parts.push(`auto-fix-ci ${triWord(input.auto_fix_ci)}`);
+  }
   const watch = stackWatchObligation({ stackId, terminal: null, unread: true, freshCursor: true });
   return {
     summary: withWatchText(watch, `${parts.join(", ")} for stack ${stackId}`),
@@ -63,6 +77,10 @@ export async function stackSet(
       ...(typeof input.auto_land === "boolean" ? { auto_land: input.auto_land } : {}),
       ...(input.auto_review !== undefined ? { auto_review: input.auto_review } : {}),
       ...(input.auto_patch !== undefined ? { auto_patch: input.auto_patch } : {}),
+      ...(input.auto_resolve_conflicts !== undefined
+        ? { auto_resolve_conflicts: input.auto_resolve_conflicts }
+        : {}),
+      ...(input.auto_fix_ci !== undefined ? { auto_fix_ci: input.auto_fix_ci } : {}),
       result,
       watch,
     },

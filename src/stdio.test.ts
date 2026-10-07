@@ -105,7 +105,7 @@ test("stdio initialize lists tools with read-only and write annotations", { time
     assert.deepEqual(stackAdopt.inputSchema.required, ["owner", "repo", "pr_number"]);
     assert.deepEqual(
       Object.keys(stackAdopt.inputSchema.properties ?? {}).sort(),
-      ["auto_land", "auto_patch", "auto_review", "owner", "pr_number", "repo"],
+      ["auto_fix_ci", "auto_land", "auto_patch", "auto_resolve_conflicts", "auto_review", "owner", "pr_number", "repo"],
     );
     const stackSet = listed.tools.find((tool) => tool.name === "stack_set");
     assert.ok(stackSet);
@@ -114,7 +114,7 @@ test("stdio initialize lists tools with read-only and write annotations", { time
     assert.deepEqual(stackSet.inputSchema.required, ["stack_id"]);
     assert.deepEqual(
       Object.keys(stackSet.inputSchema.properties ?? {}).sort(),
-      ["auto_land", "auto_patch", "auto_review", "stack_id"],
+      ["auto_fix_ci", "auto_land", "auto_patch", "auto_resolve_conflicts", "auto_review", "stack_id"],
     );
     const stackWait = listed.tools.find((tool) => tool.name === "stack_wait");
     assert.ok(stackWait);

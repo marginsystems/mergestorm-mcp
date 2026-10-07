@@ -17,6 +17,12 @@ export function stackSummary(stack: StackDto, entries: MergeQueueEntryDto[] = []
   if (typeof stack.autoPatchOverride === "boolean") {
     overrides.push(`auto-patch ${stack.autoPatchOverride ? "on" : "off"}`);
   }
+  if (typeof stack.autoResolveConflictsOverride === "boolean") {
+    overrides.push(`auto-resolve-conflicts ${stack.autoResolveConflictsOverride ? "on" : "off"}`);
+  }
+  if (typeof stack.autoFixCiOverride === "boolean") {
+    overrides.push(`auto-fix-ci ${stack.autoFixCiOverride ? "on" : "off"}`);
+  }
   if (stack.cycloneOwnerMatch) {
     overrides.push(`cyclone-owner ${stack.cycloneOwnerMatch}`);
   }

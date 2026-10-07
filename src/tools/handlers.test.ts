@@ -493,6 +493,25 @@ test("stack_set PATCHes the per-stack review / patch overrides, null clearing on
   assert.equal("auto_land" in result.data, false);
 });
 
+test("stack_set sends auto_resolve_conflicts and auto_fix_ci overrides", async () => {
+  originalFetch ??= globalThis.fetch;
+  let requestBody: unknown;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return Response.json({ autoResolveConflictsOverride: true, autoFixCiOverride: null });
+  };
+  const result = await stackSet(
+    "stack-9",
+    { auto_resolve_conflicts: true, auto_fix_ci: null },
+    cfg,
+  );
+  assert.deepEqual(requestBody, { autoResolveConflictsOverride: true, autoFixCiOverride: null });
+  assert.equal(result.isError, undefined);
+  assert.equal(stackBody(result.summary), "auto-resolve-conflicts on, auto-fix-ci default for stack stack-9");
+  assert.deepEqual(result.data.auto_resolve_conflicts, true);
+  assert.deepEqual(result.data.auto_fix_ci, null);
+});
+
 test("stack_set with no policy key is a structured error and never calls the API", async () => {
   originalFetch ??= globalThis.fetch;
   let calls = 0;
@@ -717,6 +736,8 @@ const settingsBody = {
   cyclone_patch_failure_check: "failure",
   auto_review_enabled: true,
   auto_patch_enabled: false,
+  auto_resolve_conflicts_enabled: false,
+  auto_fix_ci_enabled: false,
   vortex_show_thinking_traces: false,
   repo_overview_enabled: true,
   review_unit_land_prs_enabled: false,
@@ -738,6 +759,14 @@ test("settings_get returns the settings allowlist with an actionable summary", a
   assert.deepEqual(result.data, settingsBody);
   assert.equal(result.data.auto_patch_enabled, false);
   assert.equal(result.data.cyclone_connected, true);
+});
+
+test("settings_get names the enabled Cyclone automations in the summary", async () => {
+  mockFetch(200, { ...settingsBody, auto_resolve_conflicts_enabled: true, auto_fix_ci_enabled: true });
+  assert.equal(
+    (await settingsGet(cfg)).summary,
+    "auto_patch off · auto_resolve_conflicts on · auto_fix_ci on · Cyclone connected",
+  );
 });
 
 test("settings_get says whether stacks, the merge queue and Auto land are ready when the server reports it", async () => {
@@ -790,6 +819,10 @@ test("settings_set PATCHes only the provided writable keys", async () => {
       input: { auto_patch_enabled: true },
       body: { auto_patch_enabled: true },
       summary: "auto_patch on · Cyclone connected",
+    },
+    {
+      input: { auto_resolve_conflicts_enabled: true, auto_fix_ci_enabled: false },
+      body: { auto_resolve_conflicts_enabled: true, auto_fix_ci_enabled: false },
     },
     {
       input: { cyclone_skip_ci_enabled: false },
@@ -964,7 +997,12 @@ test("MCP whoami returns an error payload when live account details are unavaila
 });
 
 const adoptPolicies: Array<
-  Partial<Pick<StackAdoptInput, "auto_land" | "auto_review" | "auto_patch">>
+  Partial<
+    Pick<
+      StackAdoptInput,
+      "auto_land" | "auto_review" | "auto_patch" | "auto_resolve_conflicts" | "auto_fix_ci"
+    >
+  >
 > = [
   {},
   { auto_land: false, auto_review: null, auto_patch: false },
@@ -972,6 +1010,7 @@ const adoptPolicies: Array<
   { auto_land: false, auto_review: true, auto_patch: null },
   { auto_patch: true },
   { auto_review: false, auto_patch: null },
+  { auto_resolve_conflicts: true, auto_fix_ci: null },
 ];
 for (const policy of adoptPolicies) {
   test(`stack_adopt POSTs Bearer adoption with policy ${JSON.stringify(policy)}`, async () => {
@@ -988,6 +1027,10 @@ for (const policy of adoptPolicies) {
         ...("auto_land" in policy ? { autoEnqueueWhenReady: policy.auto_land } : {}),
         ...("auto_review" in policy ? { autoReviewOverride: policy.auto_review } : {}),
         ...("auto_patch" in policy ? { autoPatchOverride: policy.auto_patch } : {}),
+        ...("auto_resolve_conflicts" in policy
+          ? { autoResolveConflictsOverride: policy.auto_resolve_conflicts }
+          : {}),
+        ...("auto_fix_ci" in policy ? { autoFixCiOverride: policy.auto_fix_ci } : {}),
       });
       return Response.json(body);
     };
@@ -1009,7 +1052,7 @@ test("stack_adopt rejects invalid input without calling the API", async () => {
     { owner: "acme", pr_number: 42 },
     { owner: "acme", repo: "widgets" },
     ...[{ owner: " " }, { repo: "" }, { pr_number: 0 }, { pr_number: 1.5 },
-      { auto_land: null }, { auto_patch: "off" }].map((override) => ({
+      { auto_land: null }, { auto_patch: "off" }, { auto_fix_ci: "on" }].map((override) => ({
         owner: "acme", repo: "widgets", pr_number: 42, ...override,
       })),
   ]) {

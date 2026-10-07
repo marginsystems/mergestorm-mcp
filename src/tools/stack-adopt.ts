@@ -11,6 +11,8 @@ export const stackAdoptSchema = {
   auto_land: z.boolean().optional(),
   auto_review: z.boolean().nullable().optional(),
   auto_patch: z.boolean().nullable().optional(),
+  auto_resolve_conflicts: z.boolean().nullable().optional(),
+  auto_fix_ci: z.boolean().nullable().optional(),
 };
 const inputSchema = z.object(stackAdoptSchema);
 export type StackAdoptInput = z.infer<typeof inputSchema>;

@@ -34,7 +34,8 @@ export type StackWaitInput = {
 export function repairSummary(repair: StackRepairHint | null | undefined): string {
   if (!repair) return "";
   const files = "files" in repair && repair.files.length ? ` Files: ${repair.files.join(", ")}.` : "";
-  return `\nRepair #${repair.prNumber} (${repair.kind}).${files} ${repair.steps}`;
+  const note = "note" in repair && repair.note ? ` ${repair.note}` : "";
+  return `\nRepair #${repair.prNumber} (${repair.kind}).${files} ${repair.steps}${note}`;
 }
 
 export function withWatchText(watch: StackWatchObligation, body: string): string {
