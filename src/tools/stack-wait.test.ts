@@ -4,6 +4,8 @@ import {
   STACK_WATCH_NOT_DONE_SENTENCE,
   StackWatchError,
   StackWatchTimeoutError,
+  pollStackWatch,
+  type StackDto,
   stackWatchObligation,
   type StackWatchEnvelope,
 } from "mergestorm/client";
@@ -245,3 +247,26 @@ test("stack_wait repair summary prints a conflict note after the steps", () => {
   assert.equal(repairSummary(repair), "\nRepair #7 (merge_conflict). Files: a.ts. Merge main into feat/a. Cyclone will not resolve this conflict by itself.");
   assert.equal(repairSummary({ ...repair, note: undefined }), "\nRepair #7 (merge_conflict). Files: a.ts. Merge main into feat/a.");
 });
+
+for (const cancelledOnly of [false, true]) {
+  test(`stack_wait reports actual pending CI evidence after a same-head handoff: ${cancelledOnly}`, async () => {
+    const headSha = "a".repeat(40);
+    const stack: StackDto = { id: "stack-1", owner: "acme", repo: "widgets", trunkBranch: "main", landTarget: "main", archivedAt: null, layers: [{
+      branch: "feature", parentBranch: "main", prNumber: 12, position: 0, state: "clean",
+      openedAt: null, mergedAt: null, closedAt: null, additions: null, deletions: null,
+      openAdditions: null, openDeletions: null, title: null, htmlUrl: null,
+      ciStatus: "pending", reviewStatus: "approved", vortexStatus: null, cycloneStatus: null,
+      checks: { total: 1, success: 0, pending: 1, failure: 0, failingName: null, cancelledOnly, namedRunsCompleteHeadSha: headSha },
+      conflictDetail: null, lastRestackedSha: null, mergeable: true, mergeableState: "clean", headSha, mergeableHeadSha: headSha,
+      cycloneCiHandoff: { headSha, reason: "ci_unverified", at: null },
+    }] };
+    let now = 0;
+    const result = await stackWait({ stack_id: "stack-1" }, {}, {
+      pollStackWatch: async (cfg, id) => pollStackWatch(cfg, id, { timeoutMs: 1, now: () => now, sleep: async () => { now += 2; },
+        fetch: async (_cfg, route) => ({ status: 200, body: route.includes("/queue") ? { entries: [] } : { stacks: [stack] } }) }),
+    });
+    assert.equal(result.data.status, cancelledOnly ? "attention" : "waiting");
+    assert.equal(result.data.blocker, cancelledOnly ? "CI did not finish — left for a person" : null);
+    assert.equal(/cancelled checks/.test(result.summary), cancelledOnly);
+  });
+}
