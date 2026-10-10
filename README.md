@@ -36,7 +36,7 @@ Auth is `MERGESTORM_API_KEY`, then `~/.mergestorm/config.json` (same as `mg`).
 
 ## Client setup
 
-Requires Node.js 22+ and a Mergestorm API key. Run `mg login` on the machine running the MCP server, or supply `MERGESTORM_API_KEY` through the host's environment. The stdio server uses that credential; it does not provide an OAuth endpoint. Remote hosts need their own configuration and access to any reviewed checkout.
+Requires Node.js 22+ and a Mergestorm API key. Run `mg login` on the machine running the MCP server, or supply `MERGESTORM_API_KEY` through the host's environment. The stdio server uses that credential; it does not provide an OAuth endpoint. An agent on that machine can sign in without a browser: `mg login --start` prints a link and a code and exits, the account owner approves the link on any device, and `mg login --finish` stores the key. Remote hosts need their own configuration and access to any reviewed checkout.
 
 ### Codex
 

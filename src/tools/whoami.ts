@@ -14,7 +14,7 @@ export async function whoami(cfg?: Config, serverVersion?: string): Promise<Tool
   const key = resolveApiKey(resolved);
   if (!key) {
     throw new CommandError(
-      "No API key. Run `mergestorm login` or set MERGESTORM_API_KEY.",
+      "No API key. Run `mergestorm login` (agents: `mergestorm login --start`, then `--finish`) or set MERGESTORM_API_KEY.",
       1,
       "missing_api_key",
     );
