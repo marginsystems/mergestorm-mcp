@@ -1,6 +1,6 @@
 # mergestorm-mcp
 
-Stdio MCP server for Mergestorm. Tools: `whoami`, `credits`, `review_list`, `review_submit`, `review_wait`, `review_wait_pr`, `review_dismiss`, `issue_create`, `stack_adopt`, `stack_list`, `stack_publish`, `stack_publish_status`, `stack_set`, `stack_status`, `stack_wait`, `queue_status`, `settings_get`, `settings_set`.
+Stdio MCP server for Mergestorm. Tools: `whoami`, `credits`, `review_list`, `review_submit`, `review_wait`, `review_wait_pr`, `review_dismiss`, `issue_create`, `stack_adopt`, `stack_list`, `stack_publish`, `stack_publish_status`, `stack_set`, `stack_status`, `stack_wait`, `queue_status`, `settings_get`, `settings_set`, `repo_settings_get`, `repo_settings_set`.
 
 Every tool declares MCP `annotations` for read-only access, destructive changes, idempotence, and external systems. Reads are read-only; submission, adoption, dismissal, and policy changes are writes. Tools that can change existing policy, topology, or review gates are marked potentially destructive even when some inputs only preview or read. Annotations describe effects; the client still controls approval and authorization.
 

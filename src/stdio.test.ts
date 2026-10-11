@@ -71,11 +71,11 @@ test("stdio initialize lists tools with read-only and write annotations", { time
       listed.tools.map((tool) => tool.name).sort(),
       [...MCP_TOOL_NAMES].sort(),
     );
-    assert.equal(listed.tools.length, 18);
+    assert.equal(listed.tools.length, 20);
     const annotations = Object.fromEntries(listed.tools.map((tool) => [tool.name, tool.annotations]));
     for (const name of [
       "whoami", "credits", "review_list", "review_wait", "review_wait_pr", "stack_list",
-      "stack_status", "stack_wait", "queue_status", "settings_get", "stack_publish_status",
+      "stack_status", "stack_wait", "queue_status", "settings_get", "stack_publish_status", "repo_settings_get",
     ]) {
       assert.deepEqual(annotations[name], { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }, name);
     }

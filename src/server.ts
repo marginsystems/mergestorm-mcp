@@ -13,6 +13,7 @@ import { reviewWaitPr } from "./tools/review-wait-pr.js";
 import { reviewWait } from "./tools/review-wait.js";
 import { settingsGet } from "./tools/settings-get.js";
 import { settingsSet } from "./tools/settings-set.js";
+import { repoSettingsGet, repoSettingsSet } from "./tools/repo-settings.js";
 import { stackAdopt, stackAdoptSchema } from "./tools/stack-adopt.js";
 import { stackList } from "./tools/stack-list.js";
 import { stackPublish, stackPublishSchema, stackPublishStatus, stackPublishStatusSchema } from "./tools/stack-publish.js";
@@ -29,7 +30,7 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.21";
+export const MCP_SERVER_VERSION = "0.2.22";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -50,6 +51,8 @@ export const MCP_TOOL_NAMES = [
   "queue_status",
   "settings_get",
   "settings_set",
+  "repo_settings_get",
+  "repo_settings_set",
 ] as const;
 
 export const MCP_SERVER_INSTRUCTIONS = [
@@ -466,6 +469,47 @@ export function createMergestormMcpServer(): McpServer {
     async ({ stack_id }) => {
       try {
         return ok(await queueStatus(stack_id));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  addTool(
+    "repo_settings_get",
+    {
+      title: "Get repository settings",
+      description:
+        "Read the repository-level Auto patch, Auto review and Auto land values for the repositories connected to this account. Each value is true, false, or null; null means not set, so the account setting applies. Auto patch and Auto review precedence is the stack override (stack_set), then the repository value, then the account setting (settings_get). The Auto land repository value only seeds new stacks at adoption; it does not override an existing stack. Pass repo as owner/repo for one repository, or omit it for all.",
+      inputSchema: { repo: z.string().min(3).optional() },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await repoSettingsGet(args ?? {}));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  addTool(
+    "repo_settings_set",
+    {
+      title: "Update repository settings",
+      description:
+        "Set Auto patch (Cyclone), Auto review (Vortex) or the Auto land default for every stack and pull request in one repository connected to this account, and return the stored result. true or false sets the repository value; null clears it so the account setting applies again. A stack override (stack_set) still wins for that stack. auto_patch and auto_review apply to open stacks without an override from their next decision; nothing is cancelled or re-queued. auto_land only seeds new stacks. Only the account that connected the repository can change it. Never changes account settings.",
+      inputSchema: {
+        repo: z.string().min(3),
+        auto_patch: z.boolean().nullable().optional(),
+        auto_review: z.boolean().nullable().optional(),
+        auto_land: z.boolean().nullable().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await repoSettingsSet(args ?? {}));
       } catch (err) {
         return fail(err);
       }

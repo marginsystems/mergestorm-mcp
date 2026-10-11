@@ -1,0 +1,71 @@
+import {
+  CommandError,
+  REPO_SETTINGS_KEYS,
+  listRepoSettings,
+  patchRepoSettings,
+  type Config,
+  type RepoSettings,
+  type RepoSettingsPatch,
+} from "mergestorm/client";
+import type { ToolPayload } from "./types.js";
+
+const ARG_BY_KEY = {
+  auto_patch_enabled: "auto_patch",
+  auto_review_enabled: "auto_review",
+  auto_land_default: "auto_land",
+} as const;
+
+function parseRepo(raw: unknown): { owner: string; repo: string } {
+  const match = typeof raw === "string" ? /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(raw.trim()) : null;
+  if (!match) throw new CommandError("repo takes <owner>/<repo>.", 2, "usage");
+  return { owner: match[1]!, repo: match[2]! };
+}
+
+function words(value: boolean | null): string {
+  return value === null ? "inherit" : value ? "on" : "off";
+}
+
+export function repoSettingsSummary(entry: RepoSettings): string {
+  return `${entry.owner}/${entry.repo}: ${REPO_SETTINGS_KEYS.map((key) => `${ARG_BY_KEY[key]} ${words(entry[key])}`).join(" · ")}`;
+}
+
+export function repoSettingsPatchFromArgs(args: Record<string, unknown>): RepoSettingsPatch {
+  const patch: RepoSettingsPatch = {};
+  for (const key of REPO_SETTINGS_KEYS) {
+    const value = args[ARG_BY_KEY[key]];
+    if (value === undefined) continue;
+    if (value !== null && typeof value !== "boolean") {
+      throw new CommandError(`${ARG_BY_KEY[key]} takes true, false, or null.`, 2, "usage");
+    }
+    patch[key] = value;
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new CommandError(
+      `At least one of ${Object.values(ARG_BY_KEY).join(", ")} is required.`,
+      2,
+      "usage",
+    );
+  }
+  return patch;
+}
+
+export async function repoSettingsGet(args: Record<string, unknown>, cfg?: Config): Promise<ToolPayload> {
+  const wanted = args.repo === undefined ? null : parseRepo(args.repo);
+  const all = await listRepoSettings(cfg);
+  if (!wanted) {
+    return {
+      summary: all.length === 0 ? "No repositories are connected to this account." : all.map(repoSettingsSummary).join("\n"),
+      data: { repos: all },
+    };
+  }
+  const slug = `${wanted.owner}/${wanted.repo}`.toLowerCase();
+  const entry = all.find((candidate) => `${candidate.owner}/${candidate.repo}`.toLowerCase() === slug);
+  if (!entry) throw new CommandError(`${wanted.owner}/${wanted.repo} is not connected to this account.`);
+  return { summary: repoSettingsSummary(entry), data: { ...entry } };
+}
+
+export async function repoSettingsSet(args: Record<string, unknown>, cfg?: Config): Promise<ToolPayload> {
+  const { owner, repo } = parseRepo(args.repo);
+  const entry = await patchRepoSettings(owner, repo, repoSettingsPatchFromArgs(args), cfg);
+  return { summary: repoSettingsSummary(entry), data: { ...entry } };
+}
