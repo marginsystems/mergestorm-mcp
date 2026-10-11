@@ -4,6 +4,7 @@ import { z } from "zod";
 import { CommandError, BEARER_SETTINGS } from "mergestorm/client";
 import { MCP_SERVER_ICONS, MCP_WEBSITE_URL } from "./brand-icons.js";
 import { credits } from "./tools/credits.js";
+import { issueCreate, issueCreateSchema } from "./tools/issue-create.js";
 import { queueStatus } from "./tools/queue-status.js";
 import { reviewDismiss } from "./tools/review-dismiss.js";
 import { reviewList } from "./tools/review-list.js";
@@ -14,6 +15,7 @@ import { settingsGet } from "./tools/settings-get.js";
 import { settingsSet } from "./tools/settings-set.js";
 import { stackAdopt, stackAdoptSchema } from "./tools/stack-adopt.js";
 import { stackList } from "./tools/stack-list.js";
+import { stackPublish, stackPublishSchema, stackPublishStatus, stackPublishStatusSchema } from "./tools/stack-publish.js";
 import { stackSet } from "./tools/stack-set.js";
 import { stackWait, stackWaitSchema } from "./tools/stack-wait.js";
 import { stackStatus } from "./tools/stack-status.js";
@@ -27,7 +29,7 @@ import {
 } from "./pr-loop-instructions.js";
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.20";
+export const MCP_SERVER_VERSION = "0.2.21";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -37,8 +39,11 @@ export const MCP_TOOL_NAMES = [
   "review_wait",
   "review_wait_pr",
   "review_dismiss",
+  "issue_create",
   "stack_adopt",
   "stack_list",
+  "stack_publish",
+  "stack_publish_status",
   "stack_set",
   "stack_status",
   "stack_wait",
@@ -287,6 +292,24 @@ export function createMergestormMcpServer(): McpServer {
   );
 
   addTool(
+    "issue_create",
+    {
+      title: "Open GitHub issue",
+      description:
+        "Open a GitHub issue through Mergestorm with no GitHub credentials: the Surge App creates it and names you in the body. Use it for the issue a pull request must have before it is opened, then put Fixes #<number> in the commit or pull request body. Defaults to the origin repository of cwd; pass owner and repo together to name another. labels must already exist on the repository; an unknown one is refused with unknown_label and nothing is created. Calling it again with the same title returns the open issue it already made (created: false) when that issue is among the newest 100 open issues of the repository; an older one, or two calls at the same time, can still create a duplicate, so check the returned number before retrying after a lost response. Needs write access to the repository through your linked GitHub account and Surge installed on it.",
+      inputSchema: issueCreateSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await issueCreate(args));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  addTool(
     "stack_adopt",
     {
       title: "Adopt PR stack",
@@ -315,6 +338,42 @@ export function createMergestormMcpServer(): McpServer {
     async () => {
       try {
         return ok(await stackList());
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  addTool(
+    "stack_publish",
+    {
+      title: "Publish branch through Mergestorm",
+      description:
+        "Publish a local branch without any GitHub credentials. Reads the branch's commits from the local repository at cwd (never runs gh, git push or git fetch) and sends them to Mergestorm, which writes the exact commits and the branch on GitHub as the Surge App, opens a ready pull request when the branch has none, and registers the stack with Auto patch pinned off, Auto land on for a new stack, and Auto review left to the account. These are your own changes; Cyclone does not write or patch them. Use it for the first publication and for every later commit to that branch. Defaults: owner and repo from origin, the checked-out branch, the repository's trunk as base, title and body from the tip commit. Mergestorm verifies each commit's Git tree before it moves the branch and returns the verified head and tree. It refuses with head_changed when the branch on GitHub holds work your local branch does not, base_changed when the base commit left the base branch, protected_branch for trunk and Mergestorm-owned branches, and payload_too_large beyond 20 commits, 500 changed paths, 2 MiB a file or 8 MiB in total; submodules and merge commits are not carried. replace_head replaces that exact GitHub head with the local branch and discards its commits. Safe to call again after a lost response or a failure: it resumes and never duplicates the branch, commits, pull request or stack." + STACK_WATCH_RESULT_NOTE,
+      inputSchema: stackPublishSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await stackPublish(args));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  addTool(
+    "stack_publish_status",
+    {
+      title: "Read branch publication",
+      description:
+        "Read how far a branch published with stack_publish got: absent, pushed (branch on GitHub, no pull request), opened (pull request open, stack not registered) or registered, with the head commit and tree on GitHub, the pull request and the stack's Auto patch and Auto land state. Changes nothing. Call it after a lost stack_publish response, then call stack_publish again to resume.",
+      inputSchema: stackPublishStatusSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await stackPublishStatus(args));
       } catch (err) {
         return fail(err);
       }

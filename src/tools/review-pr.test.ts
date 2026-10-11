@@ -281,7 +281,7 @@ describe("PR review tools", { concurrency: false }, () => {
     assert.ok(MCP_TOOL_NAMES.includes("queue_status"));
     assert.deepEqual(
       MCP_TOOL_NAMES.filter((name) => name.startsWith("stack_")),
-      ["stack_adopt", "stack_list", "stack_set", "stack_status", "stack_wait"],
+      ["stack_adopt", "stack_list", "stack_publish", "stack_publish_status", "stack_set", "stack_status", "stack_wait"],
     );
   });
 });
