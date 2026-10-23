@@ -1,6 +1,6 @@
 {
   "name": "mergestorm-mcp",
-  "version": "0.2.25",
+  "version": "0.2.27",
   "description": "Mergestorm MCP server — identity, review, and read-only stack tools over stdio",
   "license": "MIT",
   "type": "module",
@@ -13,13 +13,21 @@
   "bin": {
     "mergestorm-mcp": "./dist/index.js"
   },
+  "exports": {
+    "./hosted": {
+      "mergestorm-source": "./src/hosted.ts",
+      "types": "./dist/lib/hosted.d.ts",
+      "default": "./dist/lib/hosted.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --packages=external --banner:js=\"#!/usr/bin/env node\"",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --packages=external --banner:js=\"#!/usr/bin/env node\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test src/*.test.ts src/**/*.test.ts",
     "start": "node dist/index.js"
@@ -29,7 +37,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "mergestorm": "0.3.60",
+    "mergestorm": "0.3.63",
     "zod": "^3.24.2"
   },
   "devDependencies": {

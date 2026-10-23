@@ -19,7 +19,7 @@ function published(branch: string, baseBranch: string): ServerPublishResult {
     branchCreated: true,
     branchUpdated: false,
     pr: { number: 77, url: "https://github.com/acme/widgets/pull/77", created: true },
-    stack: { id: "33333333-3333-4333-8333-333333333333", autoPatchOverride: false, autoLand: true },
+    stack: { id: "33333333-3333-4333-8333-333333333333", autoPatchOverride: null, autoLand: true },
   };
 }
 
@@ -29,6 +29,7 @@ test("stack_publish sends the named branch through Mergestorm and returns the ve
     { ...TARGET, cwd: "/repo", base: "main", title: "Add the logo", body: "Fixes #7", auto_land: false, replace_head: "c".repeat(40) },
     CFG,
     {
+      discoverTrunk: () => "main",
       publishBranchServerSide: async (input) => {
         sent.push(input);
         return published(input.branch, input.baseBranch);
@@ -51,16 +52,37 @@ test("stack_publish sends the named branch through Mergestorm and returns the ve
     },
   ]);
   const data = result.data as { result: ServerPublishResult; watch: { done: boolean; next: { args: { stack_id: string } } } };
-  assert.equal(data.result.stack.autoPatchOverride, false);
+  assert.equal(data.result.stack.autoPatchOverride, null);
   assert.equal(data.result.head.tree, "e".repeat(40));
   assert.equal(data.watch.done, false);
   assert.equal(data.watch.next.args.stack_id, "33333333-3333-4333-8333-333333333333");
   assert.match(result.summary, /^This stack is not landed\. Your task is not done\./);
-  assert.match(result.summary, /PR #77, stack 33333333-3333-4333-8333-333333333333 with Auto patch off/);
+  assert.match(result.summary, /PR #77 \(a single PR onto main\), stack 33333333-3333-4333-8333-333333333333/);
+});
+
+test("stack_publish stacks onto a base other than trunk only with extend, and says so", async () => {
+  const bases: string[] = [];
+  const deps = {
+    discoverTrunk: () => "main",
+    publishBranchServerSide: async (input: { branch: string; baseBranch: string }) => {
+      bases.push(input.baseBranch);
+      return published(input.branch, input.baseBranch);
+    },
+  };
+  const refused = await stackPublish({ ...TARGET, base: "dot/lower", title: "t", body: "" }, CFG, deps);
+  assert.equal(refused.isError, true);
+  assert.equal((refused.data.error as { code: string }).code, "implicit_stack");
+  assert.deepEqual(bases, []);
+
+  const stacked = await stackPublish({ ...TARGET, base: "dot/lower", extend: true, title: "t", body: "" }, CFG, deps);
+  assert.equal(stacked.isError, undefined);
+  assert.deepEqual(bases, ["dot/lower"]);
+  assert.match(stacked.summary, /PR #77 \(a layer stacked on dot\/lower\)/);
 });
 
 test("stack_publish reports a refused publication with its code and rejects malformed input before reading anything", async () => {
   const refused = await stackPublish({ ...TARGET, base: "main", title: "t", body: "" }, CFG, {
+    discoverTrunk: () => "main",
     publishBranchServerSide: async () => {
       throw new CommandError("dot/feature on GitHub is at d00d", 1, "head_changed");
     },
@@ -70,6 +92,7 @@ test("stack_publish reports a refused publication with its code and rejects malf
 
   let called = 0;
   const deps = {
+    discoverTrunk: () => "main",
     publishBranchServerSide: async () => {
       called += 1;
       return published("x", "main");

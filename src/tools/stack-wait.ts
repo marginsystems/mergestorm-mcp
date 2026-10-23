@@ -14,6 +14,7 @@ import {
 } from "mergestorm/client";
 import { z } from "zod";
 import type { ToolPayload } from "./types.js";
+import { CHAT_WAKE_STACK_NOTE, registerChatWake } from "./chat-wake.js";
 
 export const stackWaitSchema = {
   stack_id: z.string().trim().min(1),
@@ -61,15 +62,16 @@ function stackWaitStatusLine(envelope: StackWatchEnvelope): string {
     ...(envelope.cursor.afterFinishedAt !== undefined ? [`after_finished_at ${JSON.stringify(envelope.cursor.afterFinishedAt)}`] : []),
     ...(envelope.cursor.bounceId !== undefined ? [`bounce_id ${JSON.stringify(envelope.cursor.bounceId)}`] : []),
   ];
-  return `${base} · watch not finished: only with a confirmed host notification that resumes this task, run ${stackWatchBackgroundCommand(envelope.stackId)} as a background command and end your turn; otherwise call stack_wait again with timeout_s 45 and the same cursor: ${selectors.join(", ")}`;
+  return `${base} · watch not finished: only with a confirmed host notification that resumes this task, run ${stackWatchBackgroundCommand(envelope.stackId, envelope.cursor)} as a background command and end your turn; otherwise call stack_wait again with timeout_s 45 and the same cursor: ${selectors.join(", ")}`;
 }
 
 export async function stackWait(
   input: StackWaitInput,
   cfg?: Config,
-  deps: { pollStackWatch?: typeof pollStackWatch; signal?: AbortSignal } = {},
+  deps: { pollStackWatch?: typeof pollStackWatch; signal?: AbortSignal; chatId?: string } = {},
 ): Promise<ToolPayload> {
   const args = z.object(stackWaitSchema).parse(input);
+  const config = cfg ?? await loadConfig();
   const cursor: StackWatchCursor | undefined =
     args.enrolled_head_sha !== undefined || args.after_finished_at !== undefined || args.bounce_id !== undefined
       ? {
@@ -81,7 +83,7 @@ export async function stackWait(
       : undefined;
   let envelope: StackWatchEnvelope;
   try {
-    envelope = await (deps.pollStackWatch ?? pollStackWatch)(cfg ?? await loadConfig(), args.stack_id, {
+    envelope = await (deps.pollStackWatch ?? pollStackWatch)(config, args.stack_id, {
       timeoutMs: args.timeout_s * 1000,
       cursor,
       signal: deps.signal,
@@ -102,8 +104,11 @@ export async function stackWait(
     envelope = err.lastEnvelope;
   }
   const sealed = { ...envelope, watch: envelopeWatch(envelope) };
+  const wake = deps.chatId && !sealed.watch.done
+    ? await registerChatWake(config, deps.chatId, { kind: "stack", stackId: sealed.stackId }, deps.signal)
+    : null;
   return {
-    summary: stackWaitSummary(sealed),
-    data: sealed,
+    summary: wake ? `${stackWaitSummary(sealed)}\n\n${CHAT_WAKE_STACK_NOTE}` : stackWaitSummary(sealed),
+    data: wake ? { ...sealed, chat_wake: wake } : sealed,
   };
 }

@@ -71,11 +71,11 @@ test("stdio initialize lists tools with read-only and write annotations", { time
       listed.tools.map((tool) => tool.name).sort(),
       [...MCP_TOOL_NAMES].sort(),
     );
-    assert.equal(listed.tools.length, 20);
+    assert.equal(listed.tools.length, 27);
     const annotations = Object.fromEntries(listed.tools.map((tool) => [tool.name, tool.annotations]));
     for (const name of [
       "whoami", "credits", "review_list", "review_wait", "review_wait_pr", "stack_list",
-      "stack_status", "stack_wait", "queue_status", "settings_get", "stack_publish_status", "repo_settings_get",
+      "stack_status", "stack_wait", "queue_status", "settings_get", "stack_publish_status", "repo_settings_get", "cyclone_job",
     ]) {
       assert.deepEqual(annotations[name], { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }, name);
     }
@@ -83,7 +83,12 @@ test("stdio initialize lists tools with read-only and write annotations", { time
       readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
     });
     assert.deepEqual(annotations.stack_adopt, { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true });
-    for (const name of ["stack_set", "review_dismiss", "stack_publish"]) {
+    for (const name of ["cyclone_start", "stack_restack"]) {
+      assert.deepEqual(annotations[name], { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }, name);
+    }
+    assert.deepEqual(annotations.review_start_pr, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
+    assert.deepEqual(annotations.surge_setup, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+    for (const name of ["stack_set", "review_dismiss", "stack_publish", "review_stop_pr", "stack_enqueue"]) {
       assert.deepEqual(annotations[name], { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }, name);
     }
     assert.deepEqual(annotations.settings_set, {

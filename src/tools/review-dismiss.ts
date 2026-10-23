@@ -1,5 +1,6 @@
 import {
   dismissPrFindings,
+  dismissThreadsLine,
   stackWatchObligation,
   type Config,
   type PrFindingDismissInput,
@@ -38,6 +39,8 @@ export function reviewDismissSummary(result: PrFindingDismissResult): string {
       `${pr} ${head}: dismissed ${result.dismissed.length}, already dismissed ${result.already_dismissed.length}, still open ${result.remaining.length}.`,
     );
     for (const finding of result.remaining) lines.push(`- open: ${findingText(finding)}`);
+    const threads = dismissThreadsLine(result);
+    if (threads) lines.push(threads);
   }
   const seam = result.gate.seam;
   if (seam) {

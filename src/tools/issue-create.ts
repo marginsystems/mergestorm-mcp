@@ -10,6 +10,13 @@ export const issueCreateSchema = {
   repo: z.string().trim().regex(/^[A-Za-z0-9_.-]{1,100}$/).optional(),
   cwd: z.string().trim().min(1).optional(),
 };
+export const hostedIssueCreateSchema = {
+  title: issueCreateSchema.title,
+  body: issueCreateSchema.body,
+  labels: issueCreateSchema.labels,
+  owner: z.string().trim().regex(/^[A-Za-z0-9_.-]{1,100}$/),
+  repo: z.string().trim().regex(/^[A-Za-z0-9_.-]{1,100}$/),
+};
 const inputSchema = z.object(issueCreateSchema);
 export type IssueCreateInput = z.infer<typeof inputSchema>;
 

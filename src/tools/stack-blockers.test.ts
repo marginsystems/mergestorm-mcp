@@ -49,13 +49,16 @@ test("MCP Organism summary has pair gate and parked CI issue, not parked DIRTY",
   assert.equal(stackSummary(stack), "owner/repo · 5 layers · restack: clean · auto-land off · blocked: #42 Merge conflicts vs feat/cowork-authors · issues: #45 CI failed");
 });
 
-test("all live hard block kinds become upstack issues; summary caps at three", () => {
+test("the lowest live hard block upstack is attention, the rest are issues, and the summary caps at three", () => {
   const stack = fixture([base, ...[
     { state: "conflict" }, { mergeable: false }, { draft: true }, { ciStatus: "failure" },
     { vortexStatus: "failed" },
   ].map((detail, i) => ({ ...base, ...detail, prNumber: 42 + i, position: i + 1 } as Layer))]);
-  assert.equal(stackBlockers(stack).issues.length, 5);
-  assert.match(stackSummary(stack), /issues: #42 Conflict; #43 Merge conflicts vs main; #44 Draft PR; \+2 more$/);
+  const result = stackBlockers(stack);
+  assert.deepEqual(result.attention, { prNumber: 42, headSha: head, blocker: "Conflict", bounceKind: null });
+  assert.equal(result.repair?.kind, "restack_conflict");
+  assert.equal(result.issues.length, 4);
+  assert.match(stackSummary(stack), /blocked: #42 Conflict · issues: #43 Merge conflicts vs main; #44 Draft PR; #45 CI failed; \+1 more$/);
 });
 
 test("layers below the current candidate are not reported as upstack issues", () => {

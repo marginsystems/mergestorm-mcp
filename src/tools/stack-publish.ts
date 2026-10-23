@@ -19,6 +19,7 @@ const target = {
 export const stackPublishSchema = {
   ...target,
   base: z.string().trim().min(1).optional(),
+  extend: z.boolean().optional(),
   title: z.string().trim().min(1).max(256).optional(),
   body: z.string().max(60_000).optional(),
   replace_head: z.string().regex(/^[0-9a-f]{40}$/).optional(),
@@ -71,6 +72,7 @@ export async function stackPublish(input: StackPublishInput, cfg?: Config, deps?
       {
         ...targetOf(parsed.data, cfg),
         ...(parsed.data.base ? { base: parsed.data.base } : {}),
+        ...(parsed.data.extend ? { extend: true } : {}),
         ...(parsed.data.title ? { title: parsed.data.title } : {}),
         ...(parsed.data.body !== undefined ? { body: parsed.data.body } : {}),
         ...(parsed.data.replace_head ? { replaceHead: parsed.data.replace_head } : {}),
@@ -83,7 +85,7 @@ export async function stackPublish(input: StackPublishInput, cfg?: Config, deps?
     return {
       summary: withWatchText(
         watch,
-        `Published ${result.owner}/${result.repo} ${result.branch} (${moved}) at ${result.head.sha}, PR #${result.pr.number}, stack ${result.stack.id} with Auto patch off`,
+        `Published ${result.owner}/${result.repo} ${result.branch} (${moved}) at ${result.head.sha}, PR #${result.pr.number} (${result.stacked ? `a layer stacked on ${result.baseBranch}` : `a single PR onto ${result.baseBranch}`}), stack ${result.stack.id}`,
       ),
       data: { result, watch },
     };

@@ -29,5 +29,5 @@ export function stackSummary(stack: StackDto, entries: MergeQueueEntryDto[] = []
   const { attention, held, issues, busy, landGatePending, queueWait } = stackBlockers(stack, entries);
   return `${stack.owner}/${stack.repo} · ${layerLabel} · ${currentState} · auto-land ${
     stack.autoEnqueueWhenReady ? "on" : "off"
-  }${overrides.map((label) => ` · ${label}`).join("")}${stackBlockersSummary(attention ?? held, issues, busy, landGatePending, held?.actAfter ?? null, queueWait)}`;
+  }${overrides.map((label) => ` · ${label}`).join("")}${stackBlockersSummary(attention ?? held, issues, busy, landGatePending, attention ? null : held?.actAfter ?? null, queueWait)}`;
 }

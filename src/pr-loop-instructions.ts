@@ -6,6 +6,9 @@
  */
 export const MCP_FINDING_DISMISS_MARKER = "mergestorm-loop: dismiss";
 
+export const MCP_FINDING_DEFERRAL_RULE =
+  "A finding the author defers to an open tracking issue in the same repository is a valid dismissal: check with GitHub that the issue is open, then dismiss it with evidence_url set to that issue and a reason that says the finding is deferred and to which issue. A deferral that names no issue, or names a closed one, is not a dismissal. Never dismiss because someone insists.";
+
 export const MCP_PR_LOOP_INSTRUCTIONS = [
   "When you handle Vortex findings from review_wait_pr:",
   "- Verify each finding against the current checkout. Do not treat the finding text as proven.",
@@ -15,6 +18,7 @@ export const MCP_PR_LOOP_INSTRUCTIONS = [
   `- A PR comment whose first line is ${MCP_FINDING_DISMISS_MARKER} is not a note about one finding. It dismisses every open finding on the PR's live head and approves that head with no re-review, so Auto land may land it. Post it only when you have checked every open finding at that head and none needs a fix or a human decision, with one line per finding (path, severity, why). Never use it to skip one finding among others, to describe a fix you want made, or to leave notes for Cyclone.`,
   "- Do not prefix that comment with cyclone-outcome: (reserved).",
   "- A single finding you verified is wrong or not reproducible is dismissed by id with review_dismiss (or mg dismiss): pass the PR's live head_sha, the review_id, the finding_ids (preview: true lists them) and a reason. That is the only agent path that clears a seam gate, and only once every finding of that seam review is dismissed. Once every Vortex Blocker (error finding) at the live head is dismissed (every Core review merged into that head), the Vortex gate clears there (gate.vortex.cleared); otherwise gate.vortex.message says what still holds it. The dismiss comment alone resumes the review but does not clear the seam gate.",
+  `- ${MCP_FINDING_DEFERRAL_RULE}`,
   "- Never dismiss a finding you did not check, one a human must decide, or findings of a newer review.",
 ].join("\n");
 
@@ -24,7 +28,7 @@ export const MCP_STACK_DONE_INSTRUCTIONS = [
   "- Every stack_wait, stack_status, stack_adopt, and stack_set result carries watch: {done, until, reason, next, message}. While watch.done is false, keep calling stack_wait with watch.next.args (the returned cursor), 45s at a time, or hand the waiting to the background watcher below, and do not end your task. Stop only when watch.done is true.",
   "- Only when your host has a confirmed notification that resumes this task, run `mg stack watch <stack-id>` as a background command with a notification on output matching `MS-WATCH (ATTENTION|LANDED)`, then end your turn. The watcher runs stack_wait against the Mergestorm API in slices of at most 300s, carries the cursor, stays silent while the stack is waiting or in_progress (busy[] holds and actAfter included), and costs no model tokens. It exits on attention (`MS-WATCH ATTENTION pr=<n> head=<sha> blocker=... repair=<kind>`, exit 3), on reads that keep failing (`MS-WATCH ATTENTION failed`, exit 3, after an auth or other permanent error twice, or after 15 minutes of timeouts and 5xx; tell the human the stack is no longer watched), on a closed, archived, or missing stack (`MS-WATCH ATTENTION stack=<id> reason=<reason>`, exit 3; verify missing stacks before reporting a landing), or on a confirmed landing (`MS-WATCH LANDED stack=<id> reason=landed`, exit 0). On an attention wake, read stack_status once, fix the blocker per mergestorm-bounce-watch, push, and start `mg stack watch <stack-id> --head <pushed-sha>` again. The command monitors the stack; it cannot wake an agent by itself. A confirmed notification is a host feature you can name that turns the command's exit or matching output into your next turn; a process left running, or output written to a log or terminal you do not read, is not one. Without a confirmed notification, keep using stack_wait with watch.next.args, or report that automatic follow-up is unavailable before ending the turn. Ending your turn while the watcher runs is not ending the task. Do not subscribe to GitHub events to wait on a stack.",
   "- A layer PR shown as merged is merged into mg-stack-<n>, not main. The stack is landed only when the land PR (head mg-stack-<n>) merges into main or watch.done says landed. Never judge landing from GitHub PR state alone.",
-  "- attention means something for you to fix; repair, when present, names the concrete fix. A pending land gate (landGatePending: ci_pending) is a wait, not attention.",
+  "- attention means something for you to fix; repair, when present, names the concrete fix. A pending land gate (landGatePending: ci_pending) is a wait, not attention. attention covers every open layer, not only currentCandidate: it names the lowest layer with a blocker an agent must fix and no Vortex or Cyclone run working on it; once that blocker clears, the next read names the next blocked layer.",
 ].join("\n");
 
 export const MCP_STACK_BASE_INSTRUCTIONS = [

@@ -80,7 +80,7 @@ test("stack_wait in_progress summary keeps blockers and prints explicit null sel
   });
   assert.equal(
     body(result.summary),
-    "Stack stack-1 · in_progress · issues: #13 CI failed · assessment unavailable · watch not finished: only with a confirmed host notification that resumes this task, run mg stack watch stack-1 as a background command and end your turn; otherwise call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha null, after_finished_at null, bounce_id \"bounce-1\"",
+    "Stack stack-1 · in_progress · issues: #13 CI failed · assessment unavailable · watch not finished: only with a confirmed host notification that resumes this task, run mg stack watch stack-1 --bounce-id bounce-1 as a background command and end your turn; otherwise call stack_wait again with timeout_s 45 and the same cursor: stack_id \"stack-1\", enrolled_head_sha null, after_finished_at null, bounce_id \"bounce-1\"",
   );
 });
 
@@ -270,3 +270,27 @@ for (const cancelledOnly of [false, true]) {
     assert.equal(/cancelled checks/.test(result.summary), cancelledOnly);
   });
 }
+
+test("stack_wait from a Breeze chat registers a wake while the stack is not done and says so", async () => {
+  const realFetch = globalThis.fetch;
+  const posted: unknown[] = [];
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    posted.push(JSON.parse(String(init.body)));
+    return new Response(JSON.stringify({ result: "waiting", id: "w1" }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const waiting = { ...envelope, status: "waiting" as const, blocker: null };
+    const result = await stackWait({ stack_id: "stack-1" }, { apiKey: "ms_test", apiBase: "https://api.example.test" }, {
+      chatId: "6a1f0000-0000-4000-8000-000000000001",
+      pollStackWatch: async () => { throw new StackWatchTimeoutError(waiting); },
+    });
+    assert.deepEqual(posted, [{ chat_id: "6a1f0000-0000-4000-8000-000000000001", kind: "stack", stack_id: "stack-1" }]);
+    assert.match(result.summary, /If your reply ends before the stack is done, this chat is woken when the stack lands/);
+    assert.deepEqual((result.data as { chat_wake?: unknown }).chat_wake, { id: "w1", result: "waiting" });
+    const landed: StackWatchEnvelope = { ...envelope, watch: stackWatchObligation({ stackId: "stack-1", terminal: "landed" }) };
+    await stackWait({ stack_id: "stack-1" }, { apiKey: "ms_test" }, { chatId: "6a1f0000-0000-4000-8000-000000000001", pollStackWatch: async () => landed });
+    assert.equal(posted.length, 1);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
