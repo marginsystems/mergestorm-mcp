@@ -748,6 +748,8 @@ const settingsBody = {
   auto_land_settle_seconds: 60,
   merge_queue_batch_enabled: false,
   merge_queue_batch_size: 4,
+  merge_queue_lands_alone_paths: ["**/migrations/**", "db/migrate/**", ".github/workflows/**"],
+  merge_queue_overdrive: false,
   cyclone_connected: true,
   github_connected: true,
 };
@@ -1202,7 +1204,7 @@ test("settings_set PATCHes auto_land_settle_seconds and rejects values outside 1
   assert.equal(calls, 1);
 });
 
-test("settings_set PATCHes merge queue batching and rejects a batch size outside 2 through 8", async () => {
+test("settings_set PATCHes merge queue batching and rejects a batch size outside 2 through 10", async () => {
   originalFetch ??= globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async (_input, init) => {
@@ -1214,16 +1216,28 @@ test("settings_set PATCHes merge queue batching and rejects a batch size outside
   const result = await settingsSet({ merge_queue_batch_enabled: true, merge_queue_batch_size: 6 }, cfg);
   assert.equal(result.data.merge_queue_batch_enabled, true);
   assert.equal(result.data.merge_queue_batch_size, 6);
-  for (const value of [1, 9, 3.5, "4", true]) {
+  for (const value of [1, 11, 3.5, "4", true]) {
     await assert.rejects(
       () => settingsSet({ merge_queue_batch_size: value }, cfg),
       (err: unknown) =>
-        err instanceof Error && err.message === "merge_queue_batch_size takes a whole number from 2 through 8.",
+        err instanceof Error && err.message === "merge_queue_batch_size takes a whole number from 2 through 10.",
       String(value),
     );
   }
   await assert.rejects(() => settingsSet({ merge_queue_batch_enabled: "on" }, cfg), /merge_queue_batch_enabled takes a boolean/);
+  await assert.rejects(() => settingsSet({ merge_queue_overdrive: "on" }, cfg), /merge_queue_overdrive takes a boolean/);
   assert.equal(calls, 1);
+});
+
+test("settings_set PATCHes merge queue overdrive alone", async () => {
+  originalFetch ??= globalThis.fetch;
+  globalThis.fetch = async (_input, init) => {
+    assert.deepEqual(JSON.parse(String(init?.body)), { merge_queue_overdrive: true });
+    return Response.json({ ...settingsBody, merge_queue_overdrive: true });
+  };
+  const result = await settingsSet({ merge_queue_overdrive: true }, cfg);
+  assert.equal(result.data.merge_queue_overdrive, true);
+  assert.equal(result.data.merge_queue_batch_size, 4);
 });
 
 test("MCP settings_set schema accepts auto_land_settle_seconds over transport and bounds it", async () => {

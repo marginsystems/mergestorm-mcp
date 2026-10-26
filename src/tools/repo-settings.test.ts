@@ -16,7 +16,14 @@ const ENTRY = {
   auto_patch_enabled: false,
   auto_review_enabled: null,
   auto_land_default: true,
+  merge_queue_batch_enabled: null,
+  merge_queue_batch_size: null,
+  merge_queue_lands_alone_paths: null,
+  merge_queue_overdrive: null,
 };
+
+const MQ_INHERIT =
+  "merge_queue_batch inherit · merge_queue_overdrive inherit · merge_queue_batch_size inherit · merge_queue_lands_alone_paths inherit";
 
 const originalFetch = globalThis.fetch;
 
@@ -38,13 +45,35 @@ test("repo_settings_set PATCHes the named repository with only the given switche
       body: { auto_patch_enabled: false, auto_review_enabled: null },
     },
   ]);
-  assert.equal(result.summary, "acme/app: auto_patch off · auto_review inherit · auto_land on");
+  assert.equal(result.summary, `acme/app: auto_patch off · auto_review inherit · auto_land on · ${MQ_INHERIT}`);
   assert.deepEqual(result.data, ENTRY);
+});
+
+test("repo_settings_set PATCHes the merge queue overrides and prints their values", async () => {
+  const seen: Array<{ body: unknown }> = [];
+  globalThis.fetch = async (_input, init) => {
+    seen.push({ body: JSON.parse(String(init?.body)) });
+    return Response.json({ ...ENTRY, merge_queue_batch_enabled: true, merge_queue_batch_size: 6, merge_queue_lands_alone_paths: ["db/migrate/**", "**/*.sql"] });
+  };
+  const result = await repoSettingsSet(
+    { repo: "acme/app", merge_queue_batch: true, merge_queue_batch_size: 6, merge_queue_lands_alone_paths: ["db/migrate/**", "**/*.sql"] },
+    cfg,
+  );
+  assert.deepEqual(seen, [
+    { body: { merge_queue_batch_enabled: true, merge_queue_batch_size: 6, merge_queue_lands_alone_paths: ["db/migrate/**", "**/*.sql"] } },
+  ]);
+  assert.equal(
+    result.summary,
+    "acme/app: auto_patch off · auto_review inherit · auto_land on · merge_queue_batch on · merge_queue_overdrive inherit · merge_queue_batch_size 6 · merge_queue_lands_alone_paths db/migrate/**,**/*.sql",
+  );
+  assert.throws(() => repoSettingsPatchFromArgs({ merge_queue_batch_size: 2.5 }), /merge_queue_batch_size takes a whole number or null/);
+  assert.throws(() => repoSettingsPatchFromArgs({ merge_queue_lands_alone_paths: "db" }), /merge_queue_lands_alone_paths takes a list of path patterns or null/);
+  assert.deepEqual(repoSettingsPatchFromArgs({ merge_queue_lands_alone_paths: [] }), { merge_queue_lands_alone_paths: [] });
 });
 
 test("repo_settings_set refuses a missing repository, no switches and a value that is not true, false or null", async () => {
   await assert.rejects(() => repoSettingsSet({ auto_patch: false }, cfg), /repo takes <owner>\/<repo>/);
-  assert.throws(() => repoSettingsPatchFromArgs({}), /At least one of auto_patch, auto_review, auto_land is required/);
+  assert.throws(() => repoSettingsPatchFromArgs({}), /At least one of auto_patch, auto_review, auto_land, merge_queue_batch, merge_queue_batch_size, merge_queue_lands_alone_paths, merge_queue_overdrive is required/);
   assert.throws(() => repoSettingsPatchFromArgs({ auto_patch: "off" }), /auto_patch takes true, false, or null/);
 });
 
@@ -65,9 +94,22 @@ test("repo_settings_get lists every connected repository, or one by name", async
   const all = await repoSettingsGet({}, cfg);
   assert.equal(
     all.summary,
-    "acme/app: auto_patch off · auto_review inherit · auto_land on\nacme/other: auto_patch inherit · auto_review inherit · auto_land on",
+    `acme/app: auto_patch off · auto_review inherit · auto_land on · ${MQ_INHERIT}\nacme/other: auto_patch inherit · auto_review inherit · auto_land on · ${MQ_INHERIT}`,
   );
   const one = await repoSettingsGet({ repo: "Acme/App" }, cfg);
   assert.deepEqual(one.data, ENTRY);
   await assert.rejects(() => repoSettingsGet({ repo: "acme/missing" }, cfg), /acme\/missing is not connected to this account/);
+});
+
+test("repo_settings_set sets or clears a repository's merge queue overdrive", async () => {
+  const seen: unknown[] = [];
+  globalThis.fetch = async (_input, init) => {
+    seen.push(JSON.parse(String(init?.body)));
+    return Response.json({ ...ENTRY, merge_queue_overdrive: true });
+  };
+  const result = await repoSettingsSet({ repo: "acme/app", merge_queue_overdrive: true }, cfg);
+  assert.match(result.summary, / · merge_queue_overdrive on · /);
+  assert.deepEqual(repoSettingsPatchFromArgs({ merge_queue_overdrive: null }), { merge_queue_overdrive: null });
+  assert.throws(() => repoSettingsPatchFromArgs({ merge_queue_overdrive: "on" }), /merge_queue_overdrive takes true, false, or null/);
+  assert.deepEqual(seen, [{ merge_queue_overdrive: true }]);
 });

@@ -14,7 +14,7 @@ import {
 } from "./review-get-pr.js";
 import { MCP_PR_WAIT_DEFAULT_S, waitTimeoutMs } from "./review-submit.js";
 import type { ToolPayload } from "./types.js";
-import { CHAT_WAKE_REVIEW_NOTE, registerChatWake } from "./chat-wake.js";
+import { chatTaskNote, trackInChat } from "./chat-task.js";
 
 export type ReviewWaitPrOptions = {
   pollIntervalMs?: number;
@@ -83,22 +83,14 @@ export async function reviewWaitPr(
         finding_count: findingCount,
         phase: err.lastEnvelope?.phase ?? null,
       });
-      const wakeHead = expectedSha || observedSha || null;
-      const wake = opts.chatId
-        ? await registerChatWake(resolved, opts.chatId, {
-            kind: "vortex",
-            owner: target.owner,
-            repo: target.repo,
-            prNumber: target.prNumber,
-            headSha: wakeHead,
-            minPass: opts.pass ?? (opts.afterPass !== undefined ? opts.afterPass + 1 : (headShaMatches || !expectedSha) && observedSha ? err.lastEnvelope?.pass ?? null : null),
-          })
+      const task = opts.chatId
+        ? await trackInChat(resolved, opts.chatId, { kind: "review", owner: target.owner, repo: target.repo, prNumber: target.prNumber })
         : null;
       const shown = err.reviewSeen
         ? summary
         : `${summary} · ${noPrReviewYetMessage(target.owner, target.repo, target.prNumber, { afterSha, pass: opts.pass, afterPass: opts.afterPass })}`;
       return {
-        summary: wake ? `${shown} · ${CHAT_WAKE_REVIEW_NOTE}` : shown,
+        summary: task ? `${shown} · ${chatTaskNote(task)}` : shown,
         data: {
           status,
           head_sha: err.lastEnvelope?.head_sha ?? null,
@@ -106,7 +98,7 @@ export async function reviewWaitPr(
           finding_count: findingCount,
           phase: err.lastEnvelope?.phase ?? null,
           error: err.message,
-          ...(wake ? { chat_wake: wake } : {}),
+          ...(task ? { background_task: task } : {}),
         },
       };
     }

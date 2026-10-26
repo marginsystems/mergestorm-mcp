@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { CHAT_WAKE_CYCLONE_NOTE, CYCLONE_JOB_STILL_RUNNING_NOTE, CYCLONE_START_WAIT_NOTE, cycloneJob, cycloneJobSummary, cycloneStart } from "./cyclone-job.js";
+import { CYCLONE_JOB_STILL_RUNNING_NOTE, CYCLONE_START_WAIT_NOTE, cycloneJob, cycloneJobSummary, cycloneStart } from "./cyclone-job.js";
+import { chatTaskNote } from "./chat-task.js";
 
 const CHAT = "6a1f0000-0000-4000-8000-000000000001";
 const JOB = "7b2e0000-0000-4000-8000-000000000002";
@@ -17,19 +18,19 @@ function stubFetch(status: number, body: unknown) {
   return calls;
 }
 
-test("a CI fix sends the task, pull request, failing check and chat", async () => {
-  const calls = stubFetch(202, { dispatch_id: JOB, state: "queued", chat_wake: "waiting", message: "Cyclone is queued to fix the failing CI on acme/app#4." });
+test("a CI fix sends the task, pull request, failing check and chat, and names the chat's background task instead of polling", async () => {
+  const calls = stubFetch(202, { dispatch_id: JOB, state: "queued", background_task: { id: "t1", title: "Fix the failing CI on acme/app#4" }, message: "Cyclone is queued to fix the failing CI on acme/app#4." });
   const payload = await cycloneStart({ task: "fix_ci", owner: "acme", repo: "app", pr_number: 4, failing_check: "unit" }, cfg, CHAT);
   assert.equal(calls[0]!.url, "https://api.example.test/api/v1/agents/cyclone/jobs");
   assert.deepEqual(calls[0]!.body, { task: "fix_ci", owner: "acme", repo: "app", pr_number: 4, failing_check: "unit", chat_id: CHAT });
-  assert.equal(payload.summary, `Cyclone is queued to fix the failing CI on acme/app#4. ${CYCLONE_START_WAIT_NOTE} ${CHAT_WAKE_CYCLONE_NOTE}`);
+  assert.equal(payload.summary, `Cyclone is queued to fix the failing CI on acme/app#4. ${chatTaskNote({ id: "t1", title: "Fix the failing CI on acme/app#4" })}`);
 });
 
 test("a job started without a chat still says to wait for it, and a job that pushed at once says nothing more", async () => {
-  stubFetch(202, { dispatch_id: JOB, state: "queued", chat_wake: null, message: "Cyclone is queued to fix the review findings on acme/app#4." });
+  stubFetch(202, { dispatch_id: JOB, state: "queued", background_task: null, message: "Cyclone is queued to fix the review findings on acme/app#4." });
   const queued = await cycloneStart({ task: "fix_findings", owner: "acme", repo: "app", pr_number: 4 }, cfg, null);
   assert.equal(queued.summary, `Cyclone is queued to fix the review findings on acme/app#4. ${CYCLONE_START_WAIT_NOTE}`);
-  stubFetch(200, { dispatch_id: JOB, state: "pushed", commit_sha: "a".repeat(40), chat_wake: "waiting", message: "Cyclone pushed aaaaaaaaaa to acme/app#4." });
+  stubFetch(200, { dispatch_id: JOB, state: "pushed", commit_sha: "a".repeat(40), background_task: { id: "t1", title: "Fix" }, message: "Cyclone pushed aaaaaaaaaa to acme/app#4." });
   const pushed = await cycloneStart({ task: "fix_findings", owner: "acme", repo: "app", pr_number: 4 }, cfg, CHAT);
   assert.equal(pushed.summary, "Cyclone pushed aaaaaaaaaa to acme/app#4.");
 });
@@ -85,7 +86,7 @@ test("a failed job is final and is not polled again", async () => {
 });
 
 test("a build sends the brief and no pull request", async () => {
-  const calls = stubFetch(202, { dispatch_id: JOB, state: "queued", chat_wake: null, message: "Cyclone is building acme/todo." });
+  const calls = stubFetch(202, { dispatch_id: JOB, state: "queued", background_task: null, message: "Cyclone is building acme/todo." });
   await cycloneStart({ task: "build", owner: "acme", repo: "todo", brief: "a todo app" }, cfg, null);
   assert.deepEqual(calls[0]!.body, { task: "build", owner: "acme", repo: "todo", brief: "a todo app" });
 });

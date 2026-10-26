@@ -13,6 +13,10 @@ const ARG_BY_KEY = {
   auto_patch_enabled: "auto_patch",
   auto_review_enabled: "auto_review",
   auto_land_default: "auto_land",
+  merge_queue_batch_enabled: "merge_queue_batch",
+  merge_queue_batch_size: "merge_queue_batch_size",
+  merge_queue_lands_alone_paths: "merge_queue_lands_alone_paths",
+  merge_queue_overdrive: "merge_queue_overdrive",
 } as const;
 
 function parseRepo(raw: unknown): { owner: string; repo: string } {
@@ -21,8 +25,11 @@ function parseRepo(raw: unknown): { owner: string; repo: string } {
   return { owner: match[1]!, repo: match[2]! };
 }
 
-function words(value: boolean | null): string {
-  return value === null ? "inherit" : value ? "on" : "off";
+function words(value: boolean | number | string[] | null): string {
+  if (value === null) return "inherit";
+  if (Array.isArray(value)) return value.length === 0 ? "none" : value.join(",");
+  if (typeof value === "number") return String(value);
+  return value ? "on" : "off";
 }
 
 export function repoSettingsSummary(entry: RepoSettings): string {
@@ -34,6 +41,20 @@ export function repoSettingsPatchFromArgs(args: Record<string, unknown>): RepoSe
   for (const key of REPO_SETTINGS_KEYS) {
     const value = args[ARG_BY_KEY[key]];
     if (value === undefined) continue;
+    if (key === "merge_queue_batch_size") {
+      if (value !== null && (typeof value !== "number" || !Number.isInteger(value))) {
+        throw new CommandError(`${ARG_BY_KEY[key]} takes a whole number or null.`, 2, "usage");
+      }
+      patch[key] = value;
+      continue;
+    }
+    if (key === "merge_queue_lands_alone_paths") {
+      if (value !== null && !(Array.isArray(value) && value.every((entry) => typeof entry === "string"))) {
+        throw new CommandError(`${ARG_BY_KEY[key]} takes a list of path patterns or null.`, 2, "usage");
+      }
+      patch[key] = value;
+      continue;
+    }
     if (value !== null && typeof value !== "boolean") {
       throw new CommandError(`${ARG_BY_KEY[key]} takes true, false, or null.`, 2, "usage");
     }

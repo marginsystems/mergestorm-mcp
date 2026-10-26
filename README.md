@@ -1,6 +1,6 @@
 # mergestorm-mcp
 
-Stdio MCP server for Mergestorm. Tools: `whoami`, `credits`, `review_list`, `review_submit`, `review_wait`, `review_wait_pr`, `review_dismiss`, `review_start_pr`, `review_stop_pr`, `cyclone_start`, `cyclone_job`, `issue_create`, `stack_adopt`, `stack_enqueue`, `stack_list`, `stack_publish`, `stack_publish_status`, `stack_restack`, `stack_set`, `stack_status`, `stack_wait`, `queue_status`, `settings_get`, `settings_set`, `repo_settings_get`, `repo_settings_set`, `surge_setup`.
+Stdio MCP server for Mergestorm. Tools: `whoami`, `credits`, `review_list`, `review_submit`, `review_wait`, `review_wait_pr`, `review_dismiss`, `review_start_pr`, `review_stop_pr`, `cyclone_start`, `cyclone_job`, `issue_create`, `stack_adopt`, `stack_enqueue`, `stack_list`, `stack_publish`, `stack_publish_status`, `stack_restack`, `stack_set`, `stack_status`, `stack_wait`, `queue_status`, `settings_get`, `settings_set`, `repo_settings_get`, `repo_settings_set`, `surge_setup`, `list_memories`, `search_memory`, `remember`, `update_memory`, `forget_memory`, `get_memory_mode`, `set_memory_mode`.
 
 Every tool declares MCP `annotations` for read-only access, destructive changes, idempotence, and external systems. Reads are read-only; submission, adoption, dismissal, and policy changes are writes. Tools that can change existing policy, topology, or review gates are marked potentially destructive even when some inputs only preview or read. Annotations describe effects; the client still controls approval and authorization.
 
@@ -23,9 +23,10 @@ The agent tools start work on the user's own pull requests and repositories (`PO
 - `review_start_pr({ owner, repo, pr_number, head_sha? })` starts a Vortex review at the pull request's current head (one standard credit). With `head_sha`, nothing starts unless that is still the head. `review_stop_pr({ owner, repo, pr_number })` cancels a running review.
 - `cyclone_start({ task, owner, repo, pr_number?, failing_check?, brief? })` has Cyclone `fix_findings`, `fix_ci` or `resolve_conflicts` on a pull request and push the result, or `build` a first version of a new project from `brief` into an empty repository. A pull request with nothing to do (CI green, no conflicts, no open findings) is refused with the reason. `cyclone_job({ dispatch_id, timeout_s? })` waits up to `timeout_s` seconds (default 45, max 100, 0 reads once) until the job is pushed, completed or failed, and returns its state, outcome, pushed commit and changed files; call it again while the job is queued or running.
 - `stack_restack({ stack_id })` rebases a stack's layers onto their parents; `stack_enqueue({ stack_id })` sends it to the merge queue. Restarting a failed land is a restack, then an enqueue. Neither lands or promotes anything by itself.
+- `list_memories`, `search_memory`, `remember`, `update_memory`, `forget_memory`, `get_memory_mode` and `set_memory_mode` manage what Mergestorm remembers about you, through `/api/v1/memories`. Inside a Breeze chat, `remember` and `search_memory` follow that chat's memory setting.
 - `surge_setup({ owner, repo })` serves a repository on Surge when it is not served yet and opens the pull request that moves its CI to Surge runners.
 
-When the server serves a Breeze chat (`MERGESTORM_CHAT_ID`, or the hosted endpoint's chat header), `review_start_pr`, `cyclone_start` and `stack_enqueue` also register a wake, so the chat gets the result when the work finishes.
+When the server serves a Breeze chat (`MERGESTORM_CHAT_ID`, or the hosted endpoint's chat header), `cyclone_start`, `review_start_pr`, `stack_enqueue`, and a `review_wait_pr` or `stack_wait` that times out record the work as a background task of that chat, so the chat gets the result when the work finishes.
 
 The stack tools expose reads, one scoped policy write, and publication of your own branch:
 

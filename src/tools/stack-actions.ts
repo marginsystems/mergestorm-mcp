@@ -1,5 +1,5 @@
 import { enqueueStack, loadConfig, restackStack, stackWatchObligation, type Config } from "mergestorm/client";
-import { CHAT_WAKE_STACK_NOTE, registerChatWake } from "./chat-wake.js";
+import { chatTaskNote, trackInChat } from "./chat-task.js";
 import { withWatchText } from "./stack-wait.js";
 import type { ToolPayload } from "./types.js";
 
@@ -16,10 +16,10 @@ export async function stackEnqueue(stackId: string, cfg?: Config, chatId?: strin
   const resolved = cfg ?? (await loadConfig());
   const result = await enqueueStack(stackId, resolved);
   const watch = stackWatchObligation({ stackId, terminal: null, unread: true, freshCursor: true });
-  const wake = chatId ? await registerChatWake(resolved, chatId, { kind: "stack", stackId }) : null;
+  const task = chatId ? await trackInChat(resolved, chatId, { kind: "stack", stackId }) : null;
   const summary = withWatchText(watch, `Sent stack ${stackId} to the Mergestorm merge queue`);
   return {
-    summary: wake ? `${summary} ${CHAT_WAKE_STACK_NOTE}` : summary,
-    data: { stack_id: stackId, result, watch, ...(wake ? { chat_wake: wake } : {}) },
+    summary: task ? `${summary} ${chatTaskNote(task)}` : summary,
+    data: { stack_id: stackId, result, watch, ...(task ? { background_task: task } : {}) },
   };
 }

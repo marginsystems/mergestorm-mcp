@@ -8,8 +8,9 @@ import {
   type StackDto,
   stackWatchObligation,
   type StackWatchEnvelope,
+  type StackRepairHint,
 } from "mergestorm/client";
-import { repairSummary, stackWait } from "./stack-wait.js";
+import { hostedStackWatch, hostedToolResult, repairSummary, stackWait } from "./stack-wait.js";
 
 const openWatch = stackWatchObligation({ stackId: "stack-1", terminal: null, cursor: { enrolledHeadSha: "old-head" } });
 const envelope: StackWatchEnvelope = {
@@ -271,12 +272,12 @@ for (const cancelledOnly of [false, true]) {
   });
 }
 
-test("stack_wait from a Breeze chat registers a wake while the stack is not done and says so", async () => {
+test("stack_wait from a Breeze chat tracks the stack as a background task while it is not done and says so", async () => {
   const realFetch = globalThis.fetch;
   const posted: unknown[] = [];
   globalThis.fetch = (async (_url: string, init: RequestInit) => {
     posted.push(JSON.parse(String(init.body)));
-    return new Response(JSON.stringify({ result: "waiting", id: "w1" }), { status: 200, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ task: { id: "t1", title: "Land the stack on acme/app" } }), { status: 200, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
   try {
     const waiting = { ...envelope, status: "waiting" as const, blocker: null };
@@ -285,12 +286,81 @@ test("stack_wait from a Breeze chat registers a wake while the stack is not done
       pollStackWatch: async () => { throw new StackWatchTimeoutError(waiting); },
     });
     assert.deepEqual(posted, [{ chat_id: "6a1f0000-0000-4000-8000-000000000001", kind: "stack", stack_id: "stack-1" }]);
-    assert.match(result.summary, /If your reply ends before the stack is done, this chat is woken when the stack lands/);
-    assert.deepEqual((result.data as { chat_wake?: unknown }).chat_wake, { id: "w1", result: "waiting" });
+    assert.match(result.summary, /This chat tracks it as background task t1/);
+    assert.deepEqual((result.data as { background_task?: unknown }).background_task, { id: "t1", title: "Land the stack on acme/app" });
     const landed: StackWatchEnvelope = { ...envelope, watch: stackWatchObligation({ stackId: "stack-1", terminal: "landed" }) };
     await stackWait({ stack_id: "stack-1" }, { apiKey: "ms_test" }, { chatId: "6a1f0000-0000-4000-8000-000000000001", pollStackWatch: async () => landed });
     assert.equal(posted.length, 1);
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("a hosted watch keeps the cursor and the next stack_wait call but drops the mg commands and the background watcher", () => {
+  const hosted = hostedStackWatch(openWatch);
+  assert.equal(hosted.done, false);
+  assert.deepEqual(hosted.next, { tool: "stack_wait", args: openWatch.next!.args });
+  assert.equal(hosted.message, `This stack is not landed and the watch is not done. Next call: stack_wait ${JSON.stringify(openWatch.next!.args)}.`);
+  for (const local of [/\bmg\b/, /MS-WATCH/, /background/, /push/]) assert.doesNotMatch(JSON.stringify(hosted), local);
+  const limited = hostedStackWatch(stackWatchObligation({ stackId: "stack-1", terminal: null, status: "rate_limited", retryAfterSeconds: 9 }));
+  assert.match(limited.message, /Wait retry_after_seconds first\./);
+  const missing = hostedStackWatch(stackWatchObligation({ stackId: "stack-1", terminal: "not_found" }));
+  assert.equal(missing.done, true);
+  assert.doesNotMatch(missing.message, /gh pr view/);
+  const landed = stackWatchObligation({ stackId: "stack-1", terminal: "landed" });
+  assert.equal(hostedStackWatch(landed).message, landed.message);
+});
+
+test("a hosted tool result gets the hosted watch in its text and its structured content", () => {
+  const data = { stack_id: "stack-1", watch: openWatch };
+  const result = hostedToolResult({
+    content: [{ type: "text" as const, text: `${openWatch.message}\n\nStack stack-1 · waiting` }, { type: "text" as const, text: JSON.stringify(data) }],
+    structuredContent: data,
+  });
+  const hosted = hostedStackWatch(openWatch);
+  assert.equal(result.content[0]!.text, `${hosted.message}\n\nStack stack-1 · waiting`);
+  assert.deepEqual(result.structuredContent, { stack_id: "stack-1", watch: hosted });
+  assert.deepEqual(JSON.parse(result.content[1]!.text), result.structuredContent);
+  const plain = { content: [{ type: "text" as const, text: "ok" }], structuredContent: { key_prefix: "msk" } };
+  assert.equal(hostedToolResult(plain), plain);
+});
+
+test("a hosted stack_wait status line names only the next stack_wait call, not the background watcher", async () => {
+  const waiting: StackWatchEnvelope = { ...envelope, status: "waiting", blocker: null, prNumber: null };
+  const config = { apiKey: "msk_test", apiBase: "http://127.0.0.1:1" } as Parameters<typeof stackWait>[1];
+  const hosted = await stackWait({ stack_id: "stack-1", timeout_s: 0 }, config, { pollStackWatch: async () => waiting, hosted: true });
+  assert.match(hosted.summary, /watch not finished: call stack_wait again with timeout_s 45/);
+  const local = await stackWait({ stack_id: "stack-1", timeout_s: 0 }, config, { pollStackWatch: async () => waiting });
+  assert.match(local.summary, /run mg stack watch stack-1/);
+});
+
+test("a hosted result keeps a repair's facts and drops its local git and push steps", () => {
+  const repair: StackRepairHint = {
+    kind: "merge_conflict", prNumber: 12, headSha: "new-head", branch: "feature", liveParent: "main", files: ["a.ts"],
+    steps: "git fetch origin main && git merge origin/main, fix a.ts, then git push", note: "Never force push.",
+  };
+  const data = { stack: { id: "stack-1" }, repair, watch: openWatch };
+  const result = hostedToolResult({
+    content: [{ type: "text" as const, text: `${openWatch.message}\n\nStack stack-1 · attention${repairSummary(repair)}` }, { type: "text" as const, text: JSON.stringify(data) }],
+    structuredContent: data,
+  });
+  assert.deepEqual(result.structuredContent!.repair, { kind: "merge_conflict", prNumber: 12, headSha: "new-head", branch: "feature", liveParent: "main", files: ["a.ts"] });
+  assert.ok(result.content[0]!.text.endsWith("Stack stack-1 · attention\nRepair #12 (merge_conflict). Files: a.ts."), result.content[0]!.text);
+  for (const local of [/git /, /push/, /\bmg\b/]) assert.doesNotMatch(result.content.map((part) => part.text).join("\n"), local);
+});
+
+test("a hosted repair on a Breeze branch says the branch takes single-parent commits only", () => {
+  const repair: StackRepairHint = {
+    kind: "merge_conflict", prNumber: 12, headSha: "new-head", branch: "breeze/fix-login-ab12", liveParent: "main", files: ["a.ts"],
+    publishedBy: "breeze", steps: "Rebase it in the Breeze chat that opened #12.",
+  };
+  const data = { stack: { id: "stack-1" }, repair, watch: openWatch };
+  const result = hostedToolResult({
+    content: [{ type: "text" as const, text: `${openWatch.message}\n\nStack stack-1 · attention${repairSummary(repair)}` }, { type: "text" as const, text: JSON.stringify(data) }],
+    structuredContent: data,
+  });
+  assert.equal((result.structuredContent!.repair as { publishedBy?: string }).publishedBy, "breeze");
+  assert.ok(result.content[0]!.text.endsWith(
+    "\nRepair #12 (merge_conflict). Files: a.ts. breeze/fix-login-ab12 is a Breeze branch on main: open_pull_request publishes it with single-parent commits only, so a merge commit cannot be published.",
+  ), result.content[0]!.text);
 });

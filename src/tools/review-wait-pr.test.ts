@@ -12,7 +12,7 @@ function stub() {
   globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
     if (url.includes("/chat-waits")) {
       posted.push(JSON.parse(String(init.body)));
-      return new Response(JSON.stringify({ result: "waiting", id: "w1", min_pass: 3 }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ task: { id: "t1", title: "Review acme/app#41" } }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     return new Response(JSON.stringify({
       schema: "mergestorm.pr_review/v1", id: "r1", owner: "acme", repo: "app", pr_number: 41, status: "in_progress", raw_status: "in_progress",
@@ -23,12 +23,12 @@ function stub() {
   return posted;
 }
 
-test("review_wait_pr from a Breeze chat registers a wake for the running pass when the wait times out", async () => {
+test("review_wait_pr from a Breeze chat tracks the review as a background task when the wait times out", async () => {
   const posted = stub();
   const result = await reviewWaitPr("acme", "app", 41, "c188141", 1, cfg, { chatId: CHAT, pollIntervalMs: 50 });
-  assert.deepEqual(posted, [{ chat_id: CHAT, kind: "vortex", owner: "acme", repo: "app", pr_number: 41, head_sha: "c188141", min_pass: 3 }]);
-  assert.match(result.summary, /Keep waiting: call review_wait_pr again until the review finishes.*If your reply ends first, this chat is woken with the review's result/);
-  assert.deepEqual((result.data as { chat_wake?: unknown }).chat_wake, { id: "w1", result: "waiting" });
+  assert.deepEqual(posted, [{ chat_id: CHAT, kind: "review", owner: "acme", repo: "app", pr_number: 41 }]);
+  assert.match(result.summary, /This chat tracks it as background task t1 "Review acme\/app#41"/);
+  assert.deepEqual((result.data as { background_task?: unknown }).background_task, { id: "t1", title: "Review acme/app#41" });
 });
 
 test("review_wait_pr without a chat id registers nothing", async () => {

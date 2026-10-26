@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { CHAT_WAKE_STACK_NOTE } from "./chat-wake.js";
+import { chatTaskNote } from "./chat-task.js";
 import { stackEnqueue, stackRestack } from "./stack-actions.js";
 
 const CHAT = "6a1f0000-0000-4000-8000-000000000001";
@@ -28,21 +28,21 @@ test("restack posts to the stack's restack route and carries the watch obligatio
   assert.equal((payload.data.watch as { done: boolean }).done, false);
 });
 
-test("enqueue from a chat registers a stack wake and says so", async () => {
+test("enqueue from a chat tracks the stack as a background task and says so", async () => {
   const calls = stubFetch({
     [`/api/v1/stacks/${STACK}/enqueue`]: { entry: { id: "e1" } },
-    "/api/v1/stacks/chat-waits": { result: "waiting", id: "w1" },
+    "/api/v1/stacks/chat-waits": { task: { id: "t1", title: "Land the stack on acme/app" } },
   });
   const payload = await stackEnqueue(STACK, cfg, CHAT);
   assert.deepEqual(calls.map((call) => new URL(call.url).pathname), [`/api/v1/stacks/${STACK}/enqueue`, "/api/v1/stacks/chat-waits"]);
   assert.deepEqual(calls[1]!.body, { chat_id: CHAT, kind: "stack", stack_id: STACK });
-  assert.ok(payload.summary.endsWith(CHAT_WAKE_STACK_NOTE));
-  assert.deepEqual(payload.data.chat_wake, { id: "w1", result: "waiting" });
+  assert.ok(payload.summary.endsWith(chatTaskNote({ id: "t1", title: "Land the stack on acme/app" })));
+  assert.deepEqual(payload.data.background_task, { id: "t1", title: "Land the stack on acme/app" });
 });
 
 test("enqueue outside a chat registers nothing", async () => {
   const calls = stubFetch({ [`/api/v1/stacks/${STACK}/enqueue`]: { entry: { id: "e1" } } });
   const payload = await stackEnqueue(STACK, cfg, null);
   assert.equal(calls.length, 1);
-  assert.equal(payload.data.chat_wake, undefined);
+  assert.equal(payload.data.background_task, undefined);
 });

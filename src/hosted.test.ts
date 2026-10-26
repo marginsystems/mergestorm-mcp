@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { MCP_HOSTED_TOOL_NAMES, handleHostedMcpRequest } from "./hosted.js";
+import { MCP_HOSTED_SERVER_INSTRUCTIONS, MCP_HOSTED_TOOL_NAMES, MCP_SERVER_INSTRUCTIONS, handleHostedMcpRequest } from "./hosted.js";
 import { MCP_TOOL_NAMES, MCP_WORKSPACE_TOOL_NAMES } from "./server.js";
 
 const CALLER_KEY = "msk_live_caller_aaaaaaaaaaaaaaaaaaaa";
@@ -96,4 +96,44 @@ test("hosted endpoint refuses GET because it keeps no session stream", async () 
   });
   assert.equal(response.status, 405);
   assert.equal(response.headers.get("allow"), "POST");
+});
+
+test("hosted endpoint sends instructions for an agent with no checkout and no mg", async (t) => {
+  const api = await fakeApi(t);
+  const client = await inProcessClient(api.base, CALLER_KEY);
+  t.after(() => client.close());
+  const instructions = client.getInstructions();
+  assert.equal(instructions, MCP_HOSTED_SERVER_INSTRUCTIONS);
+  assert.notEqual(instructions, MCP_SERVER_INSTRUCTIONS);
+  for (const kept of [
+    /A stack is done only when it is landed, or when the human takes it back/,
+    /The stack is landed only when its land PR \(head mg-stack-<n>\) merges into main/,
+    /While watch\.done is false, call stack_wait with watch\.next\.args/,
+    /attention means a layer needs a fix/,
+    /in_progress means Vortex or Cyclone is still working on it/,
+    /A pending land gate \(landGatePending\) is a wait, not attention/,
+    /Dismiss a finding only after you checked it against the PR's live head/,
+    /A finding a human must decide \(Decision required, policy fork, needs a human\) stays open/,
+  ]) assert.match(instructions ?? "", kept);
+  for (const dropped of [/\bmg\b(?!-)/, /MS-WATCH/, /background/, /checkout/, /patch/, /push/]) assert.doesNotMatch(instructions ?? "", dropped);
+});
+
+test("hosted tool descriptions are short, say what comes back, and carry no local-agent text", async (t) => {
+  const api = await fakeApi(t);
+  const client = await inProcessClient(api.base, CALLER_KEY);
+  t.after(() => client.close());
+  const { tools } = await client.listTools();
+  const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  assert.ok(!byName.has("review_wait"));
+  for (const tool of tools) {
+    assert.doesNotMatch(tool.description ?? "", /See server instructions|Do not pass 300|hosts drop long MCP calls|background watching|mg review|smallest correct patch/, tool.name);
+  }
+  for (const name of ["stack_wait", "stack_status", "review_dismiss"]) {
+    assert.ok((byName.get(name)?.description ?? "").length <= 800, `${name}: ${byName.get(name)?.description?.length}`);
+  }
+  assert.match(byName.get("stack_wait")!.description!, /watch\.done true means stop/);
+  assert.match(byName.get("review_dismiss")!.description!, /evidence_url set to an open tracking issue/);
+  const timeout = (name: string) => (byName.get(name)!.inputSchema.properties as Record<string, { maximum?: number }>).timeout_s;
+  assert.equal(timeout("stack_wait")?.maximum, 45);
+  assert.equal(timeout("review_wait_pr")?.maximum, 45);
 });

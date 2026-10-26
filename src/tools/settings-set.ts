@@ -51,8 +51,8 @@ export function settingsPatchFromArgs(
       continue;
     }
     if ("kind" in row) {
-      const valid = row.kind === "logins"
-        ? Array.isArray(value) && value.every((login) => typeof login === "string")
+      const valid = row.kind === "logins" || row.kind === "paths"
+        ? Array.isArray(value) && value.every((entry) => typeof entry === "string")
         : typeof value === "string" && (row.values as readonly string[]).includes(value);
       if (!valid) throw new CommandError(`Invalid value for ${key}.`, 2, "usage");
       Object.assign(patch, { [key]: value });

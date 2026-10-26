@@ -1,7 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createMergestormMcpServer } from "./server.js";
 
-export { MCP_HOSTED_TOOL_NAMES, MCP_SERVER_INSTRUCTIONS, MCP_SERVER_NAME, MCP_SERVER_VERSION } from "./server.js";
+export { MCP_HOSTED_SERVER_INSTRUCTIONS, MCP_HOSTED_TOOL_NAMES, MCP_SERVER_INSTRUCTIONS, MCP_SERVER_NAME, MCP_SERVER_VERSION } from "./server.js";
 
 export type HostedMcpCaller = {
   apiKey: string;

@@ -1,11 +1,14 @@
-import { breezeChatId } from "./tools/chat-wake.js";
+import { breezeChatId } from "./tools/chat-task.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { CommandError, BEARER_SETTINGS, type Config } from "mergestorm/client";
+
+const BATCH_SIZE_ROW = BEARER_SETTINGS.find((row) => row.key === "merge_queue_batch_size") as { min: number; max: number };
 import { MCP_SERVER_ICONS, MCP_WEBSITE_URL } from "./brand-icons.js";
 import { credits } from "./tools/credits.js";
 import { hostedIssueCreateSchema, issueCreate, issueCreateSchema } from "./tools/issue-create.js";
+import { createMemoryToolHandlers, forgetMemorySchema, listMemoriesSchema, rememberSchema, searchMemorySchema, setMemoryModeSchema, updateMemorySchema } from "./tools/memory.js";
 import { queueStatus } from "./tools/queue-status.js";
 import { reviewDismiss } from "./tools/review-dismiss.js";
 import { reviewStartPr, reviewStopPr } from "./tools/review-start.js";
@@ -23,20 +26,23 @@ import { stackAdopt, stackAdoptSchema } from "./tools/stack-adopt.js";
 import { stackList } from "./tools/stack-list.js";
 import { stackPublish, stackPublishSchema, stackPublishStatus, stackPublishStatusSchema } from "./tools/stack-publish.js";
 import { stackSet } from "./tools/stack-set.js";
-import { stackWait, stackWaitSchema } from "./tools/stack-wait.js";
+import { stackWait, stackWaitSchema, hostedToolResult } from "./tools/stack-wait.js";
 import { stackStatus } from "./tools/stack-status.js";
 import type { ToolPayload } from "./tools/types.js";
 import { whoami } from "./tools/whoami.js";
 import {
   MCP_FINDING_DEFERRAL_RULE,
+  MCP_HOSTED_SERVER_INSTRUCTIONS,
   MCP_STACK_DONE_INSTRUCTIONS,
   MCP_PR_LOOP_INSTRUCTIONS,
   MCP_STACK_BASE_INSTRUCTIONS,
   MCP_STACK_WATCH_INSTRUCTIONS,
 } from "./pr-loop-instructions.js";
 
+export { MCP_HOSTED_SERVER_INSTRUCTIONS };
+
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.27";
+export const MCP_SERVER_VERSION = "0.2.28";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -66,6 +72,13 @@ export const MCP_TOOL_NAMES = [
   "repo_settings_get",
   "repo_settings_set",
   "surge_setup",
+  "list_memories",
+  "search_memory",
+  "remember",
+  "update_memory",
+  "forget_memory",
+  "get_memory_mode",
+  "set_memory_mode",
 ] as const;
 
 export const MCP_SERVER_INSTRUCTIONS = [
@@ -118,7 +131,7 @@ export function fail(err: unknown) {
   });
 }
 
-export const MCP_WORKSPACE_TOOL_NAMES = ["review_submit", "stack_publish", "stack_publish_status"] as const;
+export const MCP_WORKSPACE_TOOL_NAMES = ["review_submit", "review_wait", "stack_publish", "stack_publish_status"] as const;
 
 export const MCP_HOSTED_TOOL_NAMES = MCP_TOOL_NAMES.filter(
   (name) => !(MCP_WORKSPACE_TOOL_NAMES as readonly string[]).includes(name),
@@ -129,6 +142,20 @@ export type MergestormMcpServerOptions = {
   hosted?: boolean;
   chatId?: string | null;
 };
+
+const HOSTED_WAIT_MAX_S = 45;
+
+const HOSTED_REVIEW_WAIT_PR_DESCRIPTION =
+  "Read the Vortex pass on a GitHub PR; review identity is head SHA + pass. timeout_s: 0 reads it once; otherwise it waits up to timeout_s (at most 45) and returns in_progress on timeout so you can call again, or none when no review exists for that PR and head yet (call once more; if it is none again, start one with review_start_pr). Pass after_sha for the head you pushed and pass to read one exact attempt; when you already hold a resting envelope for that head, also pass after_pass set to its pass and keep it unchanged across retries. With timeout_s: 0, a pass that does not exist yet returns not_found. On rate_limited, wait retry_after_seconds before trying again. Returns the verdict and each finding.";
+
+const HOSTED_REVIEW_DISMISS_DESCRIPTION =
+  "Dismiss Vortex findings you checked and found wrong or not actionable, at the PR's live head: head_sha, review_id, finding_ids (the GitHub review comment ids, offdiff-<n> for a body-only finding; preview: true lists them without writing) or scope \"review\" to dismiss every finding of that review, and a reason of at least 20 characters. A deferral needs evidence_url set to an open tracking issue in the same repository. Refused, with nothing written, when the head moved, an id is unknown or the user's GitHub account lacks write access; retries are idempotent. Returns which gates cleared (gate.vortex.cleared, else gate.vortex.message) and the stack watch.";
+
+const HOSTED_STACK_STATUS_DESCRIPTION =
+  "Read one owned stack: its layers, checks and agent state, with the same attention, issues, repair and currentCandidate as stack_wait. Use it to see where a stack stands now; to wait for a change, use stack_wait.";
+
+const HOSTED_STACK_WAIT_DESCRIPTION =
+  "Wait up to timeout_s (1-45) for a stack to need attention, or read it once with 0. Returns a mergestorm.stack_watch/v1 envelope: attention names the PR, blocker and repair; waiting or in_progress means call again with watch.next.args; watch.done true means stop (landed, closed, archived or gone).";
 
 const HOSTED_ISSUE_CREATE_DESCRIPTION =
   "Open a GitHub issue through Mergestorm with no GitHub credentials: the Surge App creates it and names you in the body. Use it for the issue a pull request must have before it is opened, then put Fixes #<number> in the commit or pull request body. owner and repo name the repository. labels must already exist on the repository; an unknown one is refused with unknown_label and nothing is created. Calling it again with the same title returns the open issue it already made (created: false) when that issue is among the newest 100 open issues of the repository; an older one, or two calls at the same time, can still create a duplicate, so check the returned number before retrying after a lost response. Needs write access to the repository through your linked GitHub account and Surge installed on it.";
@@ -144,7 +171,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
       websiteUrl: MCP_WEBSITE_URL,
       icons: MCP_SERVER_ICONS,
     },
-    { instructions: MCP_SERVER_INSTRUCTIONS },
+    { instructions: hosted ? MCP_HOSTED_SERVER_INSTRUCTIONS : MCP_SERVER_INSTRUCTIONS },
   );
   // MCP SDK + zod generic inference hits TS2589 on several schemas; keep
   // runtime registerTool, drop the instantiation from our typecheck.
@@ -158,9 +185,11 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     },
     cb: (...args: any[]) => unknown,
   ) => void;
+  const watchNote = hosted ? "" : STACK_WATCH_RESULT_NOTE;
+  const waitMaxS = hosted ? HOSTED_WAIT_MAX_S : 300;
   const addTool: typeof registerTool = (name, toolConfig, cb) => {
     if (hosted && (MCP_WORKSPACE_TOOL_NAMES as readonly string[]).includes(name)) return;
-    registerTool(name, toolConfig, cb);
+    registerTool(name, toolConfig, hosted ? async (...args: any[]) => hostedToolResult((await cb(...args)) as ReturnType<typeof ok>) : cb);
   };
 
   addTool(
@@ -270,7 +299,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     "review_wait_pr",
     {
       title: "Wait for GitHub PR Vortex review",
-      description:
+      description: hosted ? HOSTED_REVIEW_WAIT_PR_DESCRIPTION :
         "Read the Vortex pass on a GitHub PR from the DB-only endpoint; review identity is head SHA + pass. timeout_s: 0 reads it once without polling; otherwise it polls for one 45s slice by default (max 300) and returns in_progress on timeout so you can call again, or none when no review exists for that PR and head yet (call once more; if it is none again, Vortex is not reviewing that head: comment @mergestorm-vortex review on the PR, run mg review, or push a new commit). Pass after_sha for the head you pushed and pass to read one exact attempt; when you already hold a resting envelope for that head, also pass after_pass set to its pass and keep it unchanged across retries; never replace it with the pass of an in-progress envelope, and omit after_pass for a head you hold no envelope for. With timeout_s: 0, a pass that does not exist yet returns not_found, so after a push use a positive timeout. Do not pass 300; hosts drop long MCP calls. On rate_limited, wait retry_after_seconds before trying again. After a resting pass, verify each finding; prefer the smallest correct patch; if you skip, post a PR comment starting with mergestorm-loop: dismiss.",
       inputSchema: {
         owner: z.string().min(1),
@@ -279,7 +308,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
         after_sha: z.string().optional(),
         pass: z.number().int().min(1).optional(),
         after_pass: z.number().int().min(1).optional(),
-        timeout_s: z.number().min(0).max(300).optional(),
+        timeout_s: z.number().min(0).max(waitMaxS).optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -306,7 +335,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     "review_dismiss",
     {
       title: "Dismiss Vortex findings",
-      description:
+      description: hosted ? HOSTED_REVIEW_DISMISS_DESCRIPTION :
         "Record an audited dismissal of Vortex findings you verified are wrong or not actionable on a GitHub PR. Identity is exact: head_sha must be the PR's live head, review_id a Vortex review (Core or seam) made at that head, and finding_ids the GitHub review comment ids of that review (offdiff-<n> for a body-only finding), or scope \"review\" with no finding_ids to dismiss every finding of that review. reason must say why (at least 20 characters); evidence_url is optional. Call with preview: true first to list the review's finding ids and the seam gate without writing. The caller's linked GitHub account needs write access to the repository. A moved head, another review, an unknown id or a missing permission is refused and nothing is written. Retries are idempotent. The seam gate clears only when every finding of that integration review is dismissed; the Vortex gate at the head clears only once every Vortex Blocker (error finding) at that head is dismissed and no Vortex review of it is running (gate.vortex.cleared, else gate.vortex.message); CI and Auto land policy are unchanged. Vortex does not raise a dismissed finding again on the same diff. Never dismiss a finding you did not check. " + MCP_FINDING_DEFERRAL_RULE + STACK_WATCH_RESULT_NOTE,
       inputSchema: {
         owner: z.string().min(1),
@@ -342,7 +371,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Start Vortex review",
       description:
-        "Start a Vortex review of an open GitHub pull request on the user's account, at its current head. head_sha, when given, must still be the head; otherwise nothing starts and the answer names the live head. Uses one standard credit. Findings post on the pull request; read them with review_wait_pr. A review already running at that head is reported, not started twice. When this server serves a Breeze chat, the chat is woken with the result.",
+        "Start a Vortex review of an open GitHub pull request on the user's account, at its current head. head_sha, when given, must still be the head; otherwise nothing starts and the answer names the live head. Uses one standard credit. Findings post on the pull request; read them with review_wait_pr. A review already running at that head is reported, not started twice. When the result names a background task, its result also arrives through that task when the work finishes.",
       inputSchema: { ...prInput, head_sha: z.string().regex(/^[0-9a-fA-F]{7,40}$/).optional() },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -377,7 +406,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Start Cyclone job",
       description:
-        "Have Cyclone work on the user's repository and push the result. task fix_findings fixes the open Vortex findings on pr_number, fix_ci fixes its failing CI check (failing_check names one; default the first failing check), resolve_conflicts merges its base in and resolves the conflicts; each pushes a commit to the pull request's branch. task build builds a first working version of a new project from brief into an empty repository the user created and installed Cyclone on, then opens a pull request. Uses Cyclone credits. When the pull request has nothing to do (CI green, no conflicts, no open findings) nothing starts and the answer says why: tell the user that. Returns dispatch_id. Then wait for the job with cyclone_job until it is pushed, completed or failed, and report what it pushed. When this server serves a Breeze chat and the reply ends before the job does, the chat is woken with the result.",
+        "Have Cyclone work on the user's repository and push the result. task fix_findings fixes the open Vortex findings on pr_number, fix_ci fixes its failing CI check (failing_check names one; default the first failing check), resolve_conflicts merges its base in and resolves the conflicts; each pushes a commit to the pull request's branch. When the user has not named the pull request, find it before you call, and ask them for owner/repo#number if you cannot. task build builds a first working version of a new project from brief into an empty repository the user created and installed Cyclone on, then opens a pull request. Uses Cyclone credits. When the pull request has nothing to do (CI green, no conflicts, no open findings) nothing starts and the answer says why: tell the user that. Returns dispatch_id. Wait for the job with cyclone_job until it is pushed, completed or failed, then report what it pushed. When the result names a background task, its result also arrives through that task when the work finishes.",
       inputSchema: {
         task: z.enum(CYCLONE_TASKS),
         owner: z.string().min(1),
@@ -438,7 +467,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Adopt PR stack",
       description:
-        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land is boolean; auto_review, auto_patch, auto_resolve_conflicts, and auto_fix_ci accept true, false, or null, where null clears the override. Omitted auto_land seeds from auto_land_default; omitted overrides are not seeded. Never changes account settings. Adoption needs the Mergestorm Surge GitHub App on the repository. Stacks, the merge queue and Auto land run through that App; Cyclone is the auto-patch App. Without it the API returns cyclone_not_connected or cyclone_not_installed; the message, and error.reason starting with surge_ when Surge is the one to install, say which App is missing — do not retry, tell the human what the message says. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership. With 2+ PRs, adopt moves the bottom PR's GitHub base to mg-stack-<n> and parks PR3+ on an mg-park-* freeze; a 1-PR stack stays on main. Leave those bases. Never retarget the bottom back to main." + STACK_WATCH_RESULT_NOTE,
+        "Adopt an open GitHub PR chain into a Mergestorm stack. auto_land is boolean; auto_review, auto_patch, auto_resolve_conflicts, and auto_fix_ci accept true, false, or null, where null clears the override. Omitted auto_land seeds from auto_land_default; omitted overrides are not seeded. Never changes account settings. Adoption needs the Mergestorm Surge GitHub App on the repository. Stacks, the merge queue and Auto land run through that App; Cyclone is the auto-patch App. Without it the API returns cyclone_not_connected or cyclone_not_installed; the message, and error.reason starting with surge_ when Surge is the one to install, say which App is missing — do not retry, tell the human what the message says. Read stack_status with result.stack.id afterward to verify policy and Cyclone ownership. With 2+ PRs, adopt moves the bottom PR's GitHub base to mg-stack-<n> and parks PR3+ on an mg-park-* freeze; a 1-PR stack stays on main. Leave those bases. Never retarget the bottom back to main." + watchNote,
       inputSchema: stackAdoptSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
@@ -473,7 +502,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Publish branch through Mergestorm",
       description:
-        "Publish a local branch without any GitHub credentials. Reads the branch's commits from the local repository at cwd (never runs gh, git push or git fetch) and sends them to Mergestorm, which writes the exact commits and the branch on GitHub as the Surge App, opens a ready pull request when the branch has none, and registers the stack with Auto land on for a new stack, and Auto patch and Auto review left to the stack, repository and account settings, so Cyclone patches Vortex findings when Auto patch is on. Use it for the first publication and for every later commit to that branch. Defaults: owner and repo from origin, the checked-out branch, the repository's trunk as base, title and body from the tip commit. Two ways to publish: with no base (or trunk as base) the branch opens as a single PR onto trunk; to stack it on another branch, pass that branch as base and extend: true. A base other than trunk without extend is refused with implicit_stack. The result says which one it made. Mergestorm verifies each commit's Git tree before it moves the branch and returns the verified head and tree. It refuses with head_changed when the branch on GitHub holds work your local branch does not, base_changed when the base commit left the base branch, protected_branch for trunk and Mergestorm-owned branches, and payload_too_large beyond 20 commits, 500 changed paths, 2 MiB a file or 8 MiB in total; submodules and merge commits are not carried. replace_head replaces that exact GitHub head with the local branch and discards its commits. Safe to call again after a lost response or a failure: it resumes and never duplicates the branch, commits, pull request or stack." + STACK_WATCH_RESULT_NOTE,
+        "Publish a local branch without any GitHub credentials. Reads the branch's commits from the local repository at cwd (never runs gh, git push or git fetch) and sends them to Mergestorm, which writes the exact commits and the branch on GitHub as the Surge App, opens a ready pull request when the branch has none, and registers the stack with Auto land on for a new stack, and Auto patch and Auto review left to the stack, repository and account settings, so Cyclone patches Vortex findings when Auto patch is on. Use it for the first publication and for every later commit to that branch. Defaults: owner and repo from origin, the checked-out branch, the repository's trunk as base, title and body from the tip commit. Two ways to publish: with no base (or trunk as base) the branch opens as a single PR onto trunk; to stack it on another branch, pass that branch as base and extend: true. A base other than trunk without extend is refused with implicit_stack. The result says which one it made. Mergestorm verifies each commit's Git tree before it moves the branch and returns the verified head and tree. It refuses with head_changed when the branch on GitHub holds work your local branch does not, base_changed when the base commit left the base branch, protected_branch for trunk and Mergestorm-owned branches, and payload_too_large beyond 20 commits, 500 changed paths, 2 MiB a file or 8 MiB in total; submodules and merge commits are not carried. replace_head replaces that exact GitHub head with the local branch and discards its commits. Safe to call again after a lost response or a failure: it resumes and never duplicates the branch, commits, pull request or stack." + watchNote,
       inputSchema: stackPublishSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
@@ -509,7 +538,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Set stack policy",
       description:
-        "Set per-stack automation on one owned Mergestorm stack: auto_land arms or disarms Auto land; auto_review, auto_patch, auto_resolve_conflicts, and auto_fix_ci pin Vortex auto-review, Cyclone auto-patch, Auto-resolve merge conflicts, or Auto-fix failing CI for this stack only (true or false), and null clears the pin so the stack follows the account setting again. Pass at least one key. Never changes account settings." + STACK_WATCH_RESULT_NOTE,
+        "Set per-stack automation on one owned Mergestorm stack: auto_land arms or disarms Auto land; auto_review, auto_patch, auto_resolve_conflicts, and auto_fix_ci pin Vortex auto-review, Cyclone auto-patch, Auto-resolve merge conflicts, or Auto-fix failing CI for this stack only (true or false), and null clears the pin so the stack follows the account setting again. Pass at least one key. Never changes account settings." + watchNote,
       inputSchema: {
         stack_id: z.string().min(1),
         auto_land: z.boolean().optional(),
@@ -542,7 +571,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Restack stack",
       description:
-        "Rebase one owned stack's layer branches onto their parents and push them, after the trunk or a lower layer moved. Does not merge or enqueue anything." + STACK_WATCH_RESULT_NOTE,
+        "Rebase one owned stack's layer branches onto their parents and push them, after the trunk or a lower layer moved. Does not merge or enqueue anything." + watchNote,
       inputSchema: { stack_id: z.string().min(1) },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
@@ -560,7 +589,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Send stack to merge queue",
       description:
-        "Send one owned stack to the Mergestorm merge queue, which tests it and lands it when its checks pass. To restart a failed or stuck land, call stack_restack first and then this. When this server serves a Breeze chat, the chat is woken when the stack lands, is bounced or is archived." + STACK_WATCH_RESULT_NOTE,
+        "Send one owned stack to the Mergestorm merge queue, which tests it and lands it when its checks pass. To restart a failed or stuck land, call stack_restack first and then this. When the result names a background task, its result also arrives through that task when the work finishes." + watchNote,
       inputSchema: { stack_id: z.string().min(1) },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
@@ -577,7 +606,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     "stack_status",
     {
       title: "Get stack status",
-      description:
+      description: hosted ? HOSTED_STACK_STATUS_DESCRIPTION :
         "Fetch one owned Mergestorm stack with enriched checks and agent state, plus attention, issues, and currentCandidate from the same blocker rules as stack_wait, read against that stack's own merge queue. trunkBranch is mg-stack-<n> for an adopted 2+ PR stack and matches the bottom open PR's GitHub base; an mg-park-* parentBranch is a freeze. Neither is drift to fix. repair names the concrete fix for attention; landGatePending is a wait, not attention. held names a blocker no agent run clears while Vortex or Cyclone is still busy on that PR (actAfter agents_idle, waitingOn); repair then describes the fix to plan, not to apply yet. Auto land off after a merge_failed, gh_error, or ci_timeout bounce (the stack's autoLandOff reads reason bounced) returns attention with the blocker \"Auto land off after <kind> bounce\", the bounce in issues[], and a repair of kind auto_land_off: fix the cause, then turn Auto land back on or enqueue. auto_land_switched_off (returned only when the PR has no live blocker of its own): Auto land was switched off without a bounce (queue entry cancelled, or nothing left to land); do not patch, push or turn it back on yourself, tell the human. A Vortex request_changes handoff at the live head returns attention with blocker \"Vortex findings need a person\" and repair kind vortex_findings; verify its findings against the live head." + STACK_ATTENTION_NOTE + STACK_WATCH_RESULT_NOTE,
       inputSchema: {
         stack_id: z.string().min(1),
@@ -597,14 +626,14 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     "stack_wait",
     {
       title: "Wait for stack attention",
-      description:
+      description: hosted ? HOSTED_STACK_WAIT_DESCRIPTION :
         "Wait for a stack to need attention. Returns a mergestorm.stack_watch/v1 envelope; timeout_s: 0 returns one snapshot and timeout_s: 1-45 waits up to that many seconds, returning the current status (waiting or in_progress) if a snapshot was read and no attention is found. A timeout with either of those statuses is not a failure; waiting and in_progress end this slice, and the next call is stack_wait again with the same cursor. A timeout of failed means no assessment was produced. A stack that no longer exists returns status failed with watch.done true (reason not_found) and is not an error. While Cyclone or Vortex is still working on the blocked PR it returns in_progress, not attention, with busy[] naming the PR, blocker, and agent; agents carries that PR's vortexStatus, cycloneStatus, vortexReview, and busy flags. When another layer has a blocker no agent works on, attention names that blocker instead and busy[] is empty. A blocker no agent run clears (a merge conflict vs the live parent, a restack Conflict or Restack failed, a Draft PR, a seam review pending with no review running, \"Seam review stuck in reviewing, no review running\", \"Seam re-review pending, no review running\", \"Seam verdict is for an older head, no review running\", or a review skipped for review quota) is still named during that in_progress, in blocker, prNumber, headSha, and issues[], with actAfter: \"agents_idle\" and waitingOn listing the busy agents: plan the fix, and act when a snapshot after the agents finish returns attention, re-reading the blocker then. Blockers the agents can change keep blocker and actAfter null. Attention never calls for changing a PR's GitHub base. When present, repair names the concrete fix for attention (restack_conflict and merge_conflict carry liveParent, never mg-park-*). For the three stuck-seam blockers, repair kind seam_review_stuck: do not patch or push; tell the human to click Continue, which re-queues the seam review at the live head. A pending land gate (landGatePending) returns in_progress, not attention. Auto land off after a merge_failed, gh_error, or ci_timeout bounce (the stack's autoLandOff reads reason bounced) returns attention with the blocker \"Auto land off after <kind> bounce\", the bounce in issues[], and a repair of kind auto_land_off: fix the cause, then turn Auto land back on or enqueue. auto_land_switched_off (returned only when the PR has no live blocker of its own): Auto land was switched off without a bounce (queue entry cancelled, or nothing left to land); do not patch, push or turn it back on yourself, tell the human. A Vortex request_changes handoff at the live head returns attention with blocker \"Vortex findings need a person\" and repair kind vortex_findings; verify its findings against the live head." + STACK_ATTENTION_NOTE + STACK_WATCH_RESULT_NOTE,
       inputSchema: stackWaitSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async (args, extra) => {
       try {
-        const payload = await stackWait(args, config, { signal: extra.signal, ...(chatId ? { chatId } : {}) });
+        const payload = await stackWait(args, config, { signal: extra.signal, ...(chatId ? { chatId } : {}), hosted });
         return ok(payload);
       } catch (err) {
         return fail(err);
@@ -637,7 +666,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Get repository settings",
       description:
-        "Read the repository-level Auto patch, Auto review and Auto land values for the repositories connected to this account. Each value is true, false, or null; null means not set, so the account setting applies. Auto patch and Auto review precedence is the stack override (stack_set), then the repository value, then the account setting (settings_get). The Auto land repository value only seeds new stacks at adoption; it does not override an existing stack. Pass repo as owner/repo for one repository, or omit it for all.",
+        "Read the repository-level Auto patch, Auto review, Auto land, merge queue (merge_queue_batch_enabled, merge_queue_batch_size, merge_queue_lands_alone_paths) and merge queue overdrive values for the repositories connected to this account. auto_patch_enabled, auto_review_enabled, auto_land_default, merge_queue_batch_enabled and merge_queue_overdrive are true, false, or null; merge_queue_batch_size is a whole number or null; merge_queue_lands_alone_paths is a list of path patterns or null. null means not set, so the account setting applies. Auto patch and Auto review precedence is the stack override (stack_set), then the repository value, then the account setting (settings_get). The Auto land repository value only seeds new stacks at adoption; it does not override an existing stack. merge_queue_overdrive is the repository value over the account default; while it resolves on, that repository batches up to 10 queued pull requests. Pass repo as owner/repo for one repository, or omit it for all.",
       inputSchema: { repo: z.string().min(3).optional() },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -655,12 +684,16 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Update repository settings",
       description:
-        "Set Auto patch (Cyclone), Auto review (Vortex) or the Auto land default for every stack and pull request in one repository connected to this account, and return the stored result. true or false sets the repository value; null clears it so the account setting applies again. A stack override (stack_set) still wins for that stack. auto_patch and auto_review apply to open stacks without an override from their next decision; nothing is cancelled or re-queued. auto_land only seeds new stacks. Only the account that connected the repository can change it. Never changes account settings.",
+        "Set Auto patch (Cyclone), Auto review (Vortex), the Auto land default, or the merge queue settings (merge_queue_batch, merge_queue_batch_size, merge_queue_lands_alone_paths, merge_queue_overdrive) for every stack and pull request in one repository connected to this account, and return the stored result. A value sets the repository value; null clears it so the account setting applies again. A stack override (stack_set) still wins for that stack. auto_patch and auto_review apply to open stacks without an override from their next decision; nothing is cancelled or re-queued. auto_land only seeds new stacks. merge_queue_lands_alone_paths is a list of folder prefixes or globs; a queued pull request that changes a matching file is never batched with others, and an empty list keeps only the built-in rule that a stack with more than one open pull request lands alone. merge_queue_overdrive true makes that repository batch up to 10 queued pull requests, even with batching off; false turns overdrive off for that repository whatever the account default is, and null clears the repository value so the account default (settings_get merge_queue_overdrive) applies again. Only the account that connected the repository can change it. Never changes account settings.",
       inputSchema: {
         repo: z.string().min(3),
         auto_patch: z.boolean().nullable().optional(),
         auto_review: z.boolean().nullable().optional(),
         auto_land: z.boolean().nullable().optional(),
+        merge_queue_batch: z.boolean().nullable().optional(),
+        merge_queue_batch_size: z.number().int().min(BATCH_SIZE_ROW.min).max(BATCH_SIZE_ROW.max).nullable().optional(),
+        merge_queue_lands_alone_paths: z.array(z.string()).nullable().optional(),
+        merge_queue_overdrive: z.boolean().nullable().optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
@@ -696,7 +729,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Get settings",
       description:
-        "Read the Bearer /api/v1/settings toggles, including auto_patch_enabled, auto_land_settle_seconds (how long Auto land waits before queueing), merge_queue_batch_enabled and merge_queue_batch_size (whether the merge queue tests several pull requests on one CI run, and how many), cyclone_connected (the Cyclone auto-patch App), and stacks_ready (whether stacks, the merge queue and Auto land can run for this account, which needs Mergestorm Surge).",
+        "Read the Bearer /api/v1/settings toggles, including auto_patch_enabled, auto_land_settle_seconds (how long Auto land waits before queueing), merge_queue_batch_enabled and merge_queue_batch_size (whether the merge queue tests several pull requests on one CI run, and how many), merge_queue_overdrive (the account default for overdrive: the merge queue batches up to 10 queued pull requests per repository; repo_settings_set overrides it per repository), cyclone_connected (the Cyclone auto-patch App), and stacks_ready (whether stacks, the merge queue and Auto land can run for this account, which needs Mergestorm Surge).",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async () => {
@@ -713,12 +746,12 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Update settings",
       description:
-        "Update writable Bearer /api/v1/settings values and return the stored result. At least one key is required. auto_land_settle_seconds is a whole number of seconds from 15 through 300; it applies to settle clocks that start after the write. merge_queue_batch_enabled turns merge queue batching on or off for the account, and merge_queue_batch_size is a whole number from 2 through 8. cyclone_connected and github_connected are read-only and cannot be set.",
+        "Update writable Bearer /api/v1/settings values and return the stored result. At least one key is required. auto_land_settle_seconds is a whole number of seconds from 15 through 300; it applies to settle clocks that start after the write. merge_queue_batch_enabled turns merge queue batching on or off for the account, merge_queue_batch_size is a whole number from 2 through 10, merge_queue_lands_alone_paths is the list of folder prefixes or globs whose changed files keep a pull request out of a batch, and merge_queue_overdrive is the account default for overdrive: while it resolves on, a repository batches up to 10 queued pull requests, even with batching off, without changing merge_queue_batch_size, and it stays on until turned off (repo_settings_set overrides each of these per repository). cyclone_connected and github_connected are read-only and cannot be set.",
       inputSchema: {
         ...Object.fromEntries(
           BEARER_SETTINGS.map((row) => [row.key,
             ("kind" in row
-              ? row.kind === "logins"
+              ? row.kind === "logins" || row.kind === "paths"
                 ? z.array(z.string())
                 : row.kind === "seconds" || row.kind === "count"
                   ? z.number().int().min(row.min).max(row.max)
@@ -740,6 +773,72 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
       }
     },
   );
+
+  const memory = createMemoryToolHandlers(config, chatId);
+  const memoryTools: Array<{ name: string; title: string; description: string; inputSchema?: Record<string, unknown>; annotations: ToolAnnotations; run: (args: any) => Promise<ToolPayload> }> = [
+    {
+      name: "list_memories",
+      title: "List memories",
+      description: "List what Mergestorm remembers about the user, newest first, with each memory's id. Filter by scope (user or repo), repo (owner/repo) or kind. Works with memory off, so the user can still see and delete what is stored.",
+      inputSchema: listMemoriesSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      run: memory.list,
+    },
+    {
+      name: "search_memory",
+      title: "Search memory",
+      description: "Search what Mergestorm remembers about the user by meaning, best match first. Give repo as owner/repo to search that repository's memories and standing rules too. Returns nothing when memory is off.",
+      inputSchema: searchMemorySchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      run: memory.search,
+    },
+    {
+      name: "remember",
+      title: "Remember",
+      description: "Remember one thing about the user for later conversations, on every device: a standing rule for a repository, their code or writing style, how they like to work, a fact about them or their team, or what they built or decided. One thing per call, as a plain sentence under 500 characters that still makes sense months from now. kind: rule, style, preference, fact or project. Give repo as owner/repo only for a memory about one repository. When memory is on_request, save only what the user asks you to remember. Refused with memory_off when memory is off. Never keys, tokens, passwords or other secrets.",
+      inputSchema: rememberSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      run: memory.remember,
+    },
+    {
+      name: "update_memory",
+      title: "Update memory",
+      description: "Correct a memory that is wrong or out of date: its id from list_memories or search_memory, the new text, and optionally a new kind.",
+      inputSchema: updateMemorySchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+      run: memory.update,
+    },
+    {
+      name: "forget_memory",
+      title: "Forget memory",
+      description: "Forget a memory that no longer holds, or anything the user asks you to forget, by its id from list_memories or search_memory.",
+      inputSchema: forgetMemorySchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+      run: memory.forget,
+    },
+    {
+      name: "get_memory_mode",
+      title: "Read memory mode",
+      description: "Read the account's memory mode: off (nothing is saved or recalled), on_request (save only what the user asks to remember) or all (save what will matter later).",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      run: memory.getMode,
+    },
+    {
+      name: "set_memory_mode",
+      title: "Set memory mode",
+      description: "Set the account's memory mode when the user asks: off, on_request or all.",
+      inputSchema: setMemoryModeSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+      run: memory.setMode,
+    },
+  ];
+  for (const tool of memoryTools) {
+    addTool(
+      tool.name,
+      { title: tool.title, description: tool.description, ...(tool.inputSchema ? { inputSchema: tool.inputSchema } : {}), annotations: tool.annotations },
+      async (args: unknown) => ok(await tool.run(tool.inputSchema ? args : {})),
+    );
+  }
 
   return server;
 }

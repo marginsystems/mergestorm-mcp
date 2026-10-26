@@ -1,5 +1,6 @@
 import type { Config } from "mergestorm/client";
 import { agentRequest } from "./agent-request.js";
+import { chatTaskNote, chatTaskOf } from "./chat-task.js";
 import type { ToolPayload } from "./types.js";
 
 export const CYCLONE_TASKS = ["fix_findings", "fix_ci", "resolve_conflicts", "build"] as const;
@@ -11,7 +12,6 @@ export const CYCLONE_JOB_POLL_MS = 5_000;
 export const CYCLONE_JOB_TERMINAL_STATES = ["pushed", "completed", "failed"] as const;
 
 export const CYCLONE_START_WAIT_NOTE = `Wait for it now: call cyclone_job with this dispatch_id and timeout_s ${CYCLONE_JOB_WAIT_DEFAULT_S}, again while it is queued or running, then tell the user what Cyclone pushed or why it failed.`;
-export const CHAT_WAKE_CYCLONE_NOTE = "If your reply ends before Cyclone finishes, this chat is woken with the job's result.";
 export const CYCLONE_JOB_STILL_RUNNING_NOTE = `Cyclone is not done. Call cyclone_job again with this dispatch_id and timeout_s ${CYCLONE_JOB_WAIT_DEFAULT_S}, and report the result once it is pushed, completed or failed.`;
 
 export type CycloneStartInput = {
@@ -37,7 +37,8 @@ export async function cycloneStart(input: CycloneStartInput, cfg?: Config, chatI
     },
   }, cfg);
   if (payload.isError || typeof payload.data.dispatch_id !== "string" || isCycloneJobTerminal(payload.data)) return payload;
-  return { ...payload, summary: [payload.summary, CYCLONE_START_WAIT_NOTE, ...(payload.data.chat_wake ? [CHAT_WAKE_CYCLONE_NOTE] : [])].join(" ") };
+  const task = chatTaskOf(payload.data.background_task);
+  return { ...payload, summary: `${payload.summary} ${task ? chatTaskNote(task) : CYCLONE_START_WAIT_NOTE}` };
 }
 
 export function isCycloneJobTerminal(job: Record<string, unknown>): boolean {
