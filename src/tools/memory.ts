@@ -31,7 +31,7 @@ export const searchMemorySchema = {
   repo: repo.optional(),
   limit: z.number().int().min(1).max(MEMORY_SEARCH_LIMIT_MAX).optional(),
 };
-export const rememberSchema = { text: memoryText, kind: z.enum(MEMORY_KINDS), repo: repo.optional() };
+export const rememberSchema = { text: memoryText, kind: z.enum(MEMORY_KINDS), repo: repo.optional(), keep_both: z.boolean().optional() };
 export const updateMemorySchema = { id: memoryId, text: memoryText, kind: z.enum(MEMORY_KINDS).optional() };
 export const forgetMemorySchema = { id: memoryId };
 export const setMemoryModeSchema = { memory_mode: z.enum(MEMORY_MODES) };
@@ -83,10 +83,10 @@ export function createMemoryToolHandlers(cfg: Config | undefined, chatId: string
           : all.length === 0 ? "Nothing in memory matches." : ["Memories that match, best first:", ...all.map(memoryLine)].join("\n");
         return { summary, data: found };
       }),
-    remember: (input: { text: string; kind: (typeof MEMORY_KINDS)[number]; repo?: string }) =>
+    remember: ({ keep_both, ...input }: { text: string; kind: (typeof MEMORY_KINDS)[number]; repo?: string; keep_both?: boolean }) =>
       guarded(async () => {
-        const saved = await api.saveMemory({ ...input, chatId }, cfg);
-        return { summary: saved.merged ? `That matched memory ${saved.id}, which now says this.` : `Saved to memory as ${saved.id}.`, data: saved };
+        const saved = await api.saveMemory({ ...input, chatId, ...(keep_both ? { keepBoth: true } : {}) }, cfg);
+        return { summary: saved.merged ? `Memory ${saved.id} already says this.` : `Saved to memory as ${saved.id}.`, data: saved };
       }),
     update: (input: { id: string; text: string; kind?: (typeof MEMORY_KINDS)[number] }) =>
       guarded(async () => {

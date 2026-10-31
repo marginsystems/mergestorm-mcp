@@ -17,6 +17,7 @@ const ARG_BY_KEY = {
   merge_queue_batch_size: "merge_queue_batch_size",
   merge_queue_lands_alone_paths: "merge_queue_lands_alone_paths",
   merge_queue_overdrive: "merge_queue_overdrive",
+  issue_review_enabled: "issue_review",
 } as const;
 
 function parseRepo(raw: unknown): { owner: string; repo: string } {
@@ -32,7 +33,7 @@ function words(value: boolean | number | string[] | null): string {
   return value ? "on" : "off";
 }
 
-export function repoSettingsSummary(entry: RepoSettings): string {
+function repoSettingsSummary(entry: RepoSettings): string {
   return `${entry.owner}/${entry.repo}: ${REPO_SETTINGS_KEYS.map((key) => `${ARG_BY_KEY[key]} ${words(entry[key])}`).join(" · ")}`;
 }
 

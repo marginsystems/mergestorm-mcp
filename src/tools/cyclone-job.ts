@@ -8,8 +8,8 @@ export type CycloneTask = (typeof CYCLONE_TASKS)[number];
 
 export const CYCLONE_JOB_WAIT_DEFAULT_S = 45;
 export const CYCLONE_JOB_WAIT_MAX_S = 100;
-export const CYCLONE_JOB_POLL_MS = 5_000;
-export const CYCLONE_JOB_TERMINAL_STATES = ["pushed", "completed", "failed"] as const;
+const CYCLONE_JOB_POLL_MS = 5_000;
+const CYCLONE_JOB_TERMINAL_STATES = ["pushed", "completed", "failed"] as const;
 
 export const CYCLONE_START_WAIT_NOTE = `Wait for it now: call cyclone_job with this dispatch_id and timeout_s ${CYCLONE_JOB_WAIT_DEFAULT_S}, again while it is queued or running, then tell the user what Cyclone pushed or why it failed.`;
 export const CYCLONE_JOB_STILL_RUNNING_NOTE = `Cyclone is not done. Call cyclone_job again with this dispatch_id and timeout_s ${CYCLONE_JOB_WAIT_DEFAULT_S}, and report the result once it is pushed, completed or failed.`;
@@ -41,7 +41,7 @@ export async function cycloneStart(input: CycloneStartInput, cfg?: Config, chatI
   return { ...payload, summary: `${payload.summary} ${task ? chatTaskNote(task) : CYCLONE_START_WAIT_NOTE}` };
 }
 
-export function isCycloneJobTerminal(job: Record<string, unknown>): boolean {
+function isCycloneJobTerminal(job: Record<string, unknown>): boolean {
   return (CYCLONE_JOB_TERMINAL_STATES as readonly unknown[]).includes(job.state);
 }
 

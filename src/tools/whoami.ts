@@ -1,5 +1,6 @@
 import {
   CommandError,
+  accountLabel,
   apiBase,
   configPath,
   getMe,
@@ -23,7 +24,11 @@ export async function whoami(cfg?: Config, serverVersion?: string): Promise<Tool
   if (!me) {
     throw new CommandError("Live account details unavailable. Could not verify account with /me.");
   }
+  const account = accountLabel(me.account);
   const data = {
+    account,
+    github_login: me.account?.github_login ?? null,
+    email: me.account?.email ?? null,
     key_prefix: me.key.prefix,
     key_name: me.key.name ?? null,
     plan_key: me.plan_key ?? null,
@@ -35,7 +40,7 @@ export async function whoami(cfg?: Config, serverVersion?: string): Promise<Tool
   };
   const plan = data.plan_label_key ?? data.plan_key ?? "unknown plan";
   return {
-    summary: `${data.key_prefix} · ${plan}${serverVersion ? ` · mergestorm-mcp ${serverVersion}` : ""}`,
+    summary: `${account ? `${account} · ` : ""}${data.key_prefix} · ${plan}${serverVersion ? ` · mergestorm-mcp ${serverVersion}` : ""}`,
     data,
   };
 }

@@ -10,7 +10,7 @@ import { settingsSummary } from "./settings-get.js";
 import type { ToolPayload } from "./types.js";
 
 /** Read-only on `/api/v1/settings`; the API owns them, agents never write them. */
-export const SETTINGS_READ_ONLY_KEYS = [
+const SETTINGS_READ_ONLY_KEYS = [
   "cyclone_connected",
   "github_connected",
 ] as const;
@@ -20,7 +20,7 @@ export const SETTINGS_READ_ONLY_KEYS = [
  * passes through; read-only keys and empty patches are usage errors so the
  * failure is the caller's wording, never a silent no-op.
  */
-export function settingsPatchFromArgs(
+function settingsPatchFromArgs(
   args: Record<string, unknown>,
 ): SettingsPatch {
   for (const key of SETTINGS_READ_ONLY_KEYS) {

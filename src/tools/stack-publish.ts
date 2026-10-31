@@ -6,6 +6,7 @@ import {
   type Config,
 } from "mergestorm/client";
 import { z } from "zod";
+import { withIssueReviewHint } from "./issue-review-wait.js";
 import { withWatchText } from "./stack-wait.js";
 import type { ToolPayload } from "./types.js";
 
@@ -38,7 +39,7 @@ type StatusDeps = Parameters<typeof workingBranchPublication>[1];
 function failure(err: unknown, fallback: string): ToolPayload {
   const message = err instanceof Error ? err.message : String(err);
   return {
-    summary: message,
+    summary: withIssueReviewHint(err, message),
     data: {
       error: {
         code: err instanceof CommandError ? err.code ?? fallback : fallback,

@@ -77,9 +77,9 @@ export function hostedStackWatch(watch: StackWatchObligation): HostedStackWatch 
 
 type McpTextResult = { isError?: boolean; content: { type: "text"; text: string }[]; structuredContent?: Record<string, unknown> };
 
-export type HostedStackRepair = Omit<StackRepairHint, "steps" | "note">;
+type HostedStackRepair = Omit<StackRepairHint, "steps" | "note">;
 
-export function hostedStackRepair(repair: StackRepairHint): HostedStackRepair {
+function hostedStackRepair(repair: StackRepairHint): HostedStackRepair {
   const { steps: _steps, note: _note, findings: _findings, ...facts } = repair as StackRepairHint & { note?: string; findings?: string };
   return facts;
 }

@@ -41,7 +41,7 @@ const PINNABLE_SPECIALISTS = [
   "frontend",
 ] as const;
 
-export function assertPinnableSpecialists(specialists: string[] | undefined): void {
+function assertPinnableSpecialists(specialists: string[] | undefined): void {
   if (!specialists?.length) return;
   const unknown = specialists.filter(
     (id) => !(PINNABLE_SPECIALISTS as readonly string[]).includes(id),
@@ -59,7 +59,7 @@ export function assertPinnableSpecialists(specialists: string[] | undefined): vo
  * The `cwd` tool argument is agent-controlled, so it cannot serve as the
  * sandbox root; default to the MCP server's own working directory.
  */
-export function mcpSandboxRoot(): string {
+function mcpSandboxRoot(): string {
   return process.env.MERGESTORM_SANDBOX_ROOT?.trim() || process.cwd();
 }
 

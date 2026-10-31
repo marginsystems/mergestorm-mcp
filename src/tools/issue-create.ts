@@ -43,7 +43,7 @@ export async function issueCreate(input: IssueCreateInput, cfg?: Config, deps: I
       cfg,
     );
     return {
-      summary: `${issue.created ? "Opened" : "Already open:"} ${target.owner}/${target.repo}#${issue.number} ${issue.url}. Put "Fixes #${issue.number}" in the commit or pull request body.`,
+      summary: `${issue.created ? "Opened" : "Already open:"} ${target.owner}/${target.repo}#${issue.number} ${issue.url}. Call issue_review_wait for #${issue.number} and open the pull request only once it is approved, with "Fixes #${issue.number}" in the commit or pull request body.`,
       data: { owner: target.owner, repo: target.repo, ...issue },
     };
   } catch (err) {

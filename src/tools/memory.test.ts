@@ -35,6 +35,7 @@ test("remember and search carry the Breeze chat id; list, update, forget and mod
   const { api, calls } = fakeApi();
   const tools = createMemoryToolHandlers(CFG, CHAT, api);
   assert.equal((await tools.remember({ text: "Use pnpm", kind: "rule", repo: "acme/web" })).summary, `Saved to memory as ${ID}.`);
+  await tools.remember({ text: "Use npm", kind: "rule", keep_both: true });
   const found = await tools.search({ query: "package manager", repo: "acme/web" });
   assert.equal(found.summary, ["Memories that match, best first:", `- [${ID}] (rule, acme/web) Use pnpm`, `- [${ID}] (fact) Ships on Fridays`].join("\n"));
   assert.equal((await tools.list({ kind: "fact" })).summary, `Memory is all. 1 memory.\n- [${ID}] (fact) Ships on Fridays`);
@@ -44,6 +45,7 @@ test("remember and search carry the Breeze chat id; list, update, forget and mod
   assert.equal((await tools.setMode({ memory_mode: "off" })).summary, "Memory is now off.");
   assert.deepEqual(calls, [
     ["save", { text: "Use pnpm", kind: "rule", repo: "acme/web", chatId: CHAT }],
+    ["save", { text: "Use npm", kind: "rule", chatId: CHAT, keepBoth: true }],
     ["search", { query: "package manager", repo: "acme/web", chatId: CHAT }],
     ["list", { kind: "fact" }, CFG],
     ["update", ID, { text: "Ships on Mondays", kind: "preference" }],

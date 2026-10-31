@@ -26,7 +26,7 @@ function findingText(finding: { finding_id: string; path: string | null; title: 
   return `${finding.finding_id} (${finding.path ?? "review body"}: ${finding.title})`;
 }
 
-export function reviewDismissSummary(result: PrFindingDismissResult): string {
+function reviewDismissSummary(result: PrFindingDismissResult): string {
   const pr = `${result.owner}/${result.repo}#${result.pr_number}`;
   const kind = result.review_kind === "seam" ? "seam review" : "Vortex review";
   const head = `${kind} ${result.review_id} at ${result.head_sha.slice(0, 7)}`;

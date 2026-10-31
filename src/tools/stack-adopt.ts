@@ -2,6 +2,7 @@ import { adoptStack, CommandError, stackWatchObligation, type Config } from "mer
 import { z } from "zod";
 import { stackSetPatch } from "./stack-set.js";
 import { withWatchText } from "./stack-wait.js";
+import { withIssueReviewHint } from "./issue-review-wait.js";
 import type { ToolPayload } from "./types.js";
 
 export const stackAdoptSchema = {
@@ -47,7 +48,7 @@ export async function stackAdopt(input: StackAdoptInput, cfg?: Config): Promise<
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
-      summary: message,
+      summary: withIssueReviewHint(err, message),
       data: {
         error: {
           code: err instanceof CommandError ? err.code ?? "stack_adopt_failed" : "stack_adopt_failed",

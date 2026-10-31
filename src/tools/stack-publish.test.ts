@@ -90,6 +90,16 @@ test("stack_publish reports a refused publication with its code and rejects malf
   assert.equal(refused.isError, true);
   assert.deepEqual(refused.data.error, { code: "head_changed", message: "dot/feature on GitHub is at d00d" });
 
+  const unapproved = await stackPublish({ ...TARGET, base: "main", title: "t", body: "Fixes #12" }, CFG, {
+    discoverTrunk: () => "main",
+    publishBranchServerSide: async () => {
+      throw new CommandError("Vortex has not approved #12.", 4, "issue_not_approved");
+    },
+  });
+  assert.equal(unapproved.isError, true);
+  assert.equal((unapproved.data.error as { code: string }).code, "issue_not_approved");
+  assert.match(unapproved.summary, /^Vortex has not approved #12\.\nDo not open the pull request yet: .*issue_review_wait/);
+
   let called = 0;
   const deps = {
     discoverTrunk: () => "main",

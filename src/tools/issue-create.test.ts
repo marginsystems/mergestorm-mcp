@@ -18,7 +18,7 @@ test("issue_create opens the issue on the named repository and tells the agent h
   });
   assert.deepEqual(sent, [{ input: { owner: "acme", repo: "widgets", title: "Fix it", body: "Details", labels: ["bug"] }, cfg: CFG }]);
   assert.deepEqual(result.data, { owner: "acme", repo: "widgets", number: 12, url: "https://github.com/acme/widgets/issues/12", created: true });
-  assert.equal(result.summary, 'Opened acme/widgets#12 https://github.com/acme/widgets/issues/12. Put "Fixes #12" in the commit or pull request body.');
+  assert.equal(result.summary, 'Opened acme/widgets#12 https://github.com/acme/widgets/issues/12. Call issue_review_wait for #12 and open the pull request only once it is approved, with "Fixes #12" in the commit or pull request body.');
 });
 
 test("issue_create falls back to the origin repository and reports an issue it already opened", async () => {
