@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CommandError, IssueReviewTimeoutError, type IssueReviewStatus } from "mergestorm/client";
-import { issueReviewWait } from "./issue-review-wait.js";
+import { CommandError, IssueReviewTimeoutError, NO_LINKED_ISSUE, type IssueReviewStatus } from "mergestorm/client";
+import { ISSUE_NOT_APPROVED_HINT, issueReviewWait, withIssueReviewHint } from "./issue-review-wait.js";
 
 const CFG = { apiKey: "msk_live_test", apiBase: "https://api.example.test" };
 const TARGET = { owner: "acme", repo: "widgets", number: 12 };
@@ -12,6 +12,7 @@ function status(overrides: Partial<IssueReviewStatus> = {}): IssueReviewStatus {
     repo: "widgets",
     number: 12,
     enabled: true,
+    mode: "auto",
     state: "needs_answers",
     approvedBy: null,
     round: 2,
@@ -69,6 +70,13 @@ test("issue_review_wait returns pending at the end of the slice, and off as no a
   assert.equal(off.summary, "Issue reviews are off for acme/widgets; acme/widgets#12 needs no approval.");
 });
 
+test("issue_review_wait says an untagged issue in mention mode needs no approval", async () => {
+  const mention = await issueReviewWait(TARGET, CFG, {
+    pollIssueReview: async () => status({ mode: "mention", state: "unreviewed", verdict: null, points: [], round: null, next: "" }),
+  });
+  assert.equal(mention.summary, "Issue reviews for acme/widgets run on mention; acme/widgets#12 needs no approval, so you may open the pull request.");
+});
+
 test("issue_review_wait refuses bad input and reports an older server and API errors by code", async () => {
   for (const input of [{ ...TARGET, number: 0 }, { ...TARGET, timeout_s: 46 }, { ...TARGET, owner: "a b" }]) {
     const refused = await issueReviewWait(input, CFG, { pollIssueReview: async () => assert.fail("no read") });
@@ -83,4 +91,14 @@ test("issue_review_wait refuses bad input and reports an older server and API er
     },
   });
   assert.deepEqual(limited.data.error, { code: "rate_limited", message: "Rate limited.", retry_after_seconds: 9 });
+});
+
+test("withIssueReviewHint adds the reply hint to a refusal that names issues", () => {
+  const err = new CommandError("#12 is needs answers.", 4, "issue_not_approved");
+  assert.equal(withIssueReviewHint(err, err.message), `#12 is needs answers.\n${ISSUE_NOT_APPROVED_HINT}`);
+});
+
+test("withIssueReviewHint leaves a refusal for a missing Fixes #N link without the reply hint", () => {
+  const err = new CommandError("add Fixes #N for the PR's issue to the PR body", 4, "issue_not_approved", { reason: NO_LINKED_ISSUE });
+  assert.equal(withIssueReviewHint(err, err.message), err.message);
 });

@@ -1,6 +1,7 @@
 import {
   CommandError,
   IssueReviewTimeoutError,
+  NO_LINKED_ISSUE,
   getIssueReview,
   loadConfig,
   pollIssueReview,
@@ -27,25 +28,33 @@ export type IssueReviewWaitDeps = {
   pollIntervalMs?: number;
 };
 
+function blockingCount(status: IssueReviewStatus): number {
+  return status.points.filter((point) => point.blocking !== false).length;
+}
+
 export function issueReviewSummary(status: IssueReviewStatus): string {
   const ref = `${status.owner}/${status.repo}#${status.number}`;
   const round = status.round ? ` (round ${status.round} of ${status.maxRounds})` : "";
   const head =
     status.state === "approved"
-      ? `${ref} is approved by ${status.approvedBy === "human" ? "a person" : "Vortex"}; you may open the pull request.`
+      ? status.approvedBy === null
+        ? `The Vortex review of ${ref} failed, so it does not hold the pull request back; you may open it.`
+        : `${ref} is approved by ${status.approvedBy === "human" ? "a person" : "Vortex"}; you may open the pull request.`
       : status.state === "off"
         ? `Issue reviews are off for ${status.owner}/${status.repo}; ${ref} needs no approval.`
-        : status.state === "pending"
+        : status.mode === "mention" && status.state === "unreviewed"
+          ? `Issue reviews for ${status.owner}/${status.repo} run on mention; ${ref} needs no approval, so you may open the pull request.`
+          : status.state === "pending"
           ? `${ref}: Vortex is still reviewing${round}; call issue_review_wait again.`
-          : `${ref}: ${status.state}${round}, ${status.points.length} point${status.points.length === 1 ? "" : "s"} to answer. Do not open the pull request yet.`;
+          : `${ref}: ${status.state}${round}, ${blockingCount(status)} point${blockingCount(status) === 1 ? "" : "s"} to answer.${status.mode === "auto" ? " Do not open the pull request yet." : ""}`;
   return status.next ? `${head} ${status.next}` : head;
 }
 
 export const ISSUE_NOT_APPROVED_HINT =
-  "Do not open the pull request yet: answer the points in a comment on each issue, call issue_review_wait until it returns approved, then try again.";
+  "Do not open the pull request yet: reply once in a comment on each issue, accepting each blocking point's suggested fix or saying why not (notes do not block), call issue_review_wait until it returns approved, then try again.";
 
 export function withIssueReviewHint(err: unknown, message: string): string {
-  return err instanceof CommandError && err.code === "issue_not_approved" ? `${message}\n${ISSUE_NOT_APPROVED_HINT}` : message;
+  return err instanceof CommandError && err.code === "issue_not_approved" && err.reason !== NO_LINKED_ISSUE ? `${message}\n${ISSUE_NOT_APPROVED_HINT}` : message;
 }
 
 function failure(code: string, message: string, extra: Record<string, unknown> = {}): ToolPayload {

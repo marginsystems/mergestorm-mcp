@@ -18,6 +18,7 @@ const ARG_BY_KEY = {
   merge_queue_lands_alone_paths: "merge_queue_lands_alone_paths",
   merge_queue_overdrive: "merge_queue_overdrive",
   issue_review_enabled: "issue_review",
+  issue_auto_review_enabled: "issue_auto_review",
 } as const;
 
 function parseRepo(raw: unknown): { owner: string; repo: string } {

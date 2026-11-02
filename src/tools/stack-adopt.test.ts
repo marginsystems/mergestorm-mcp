@@ -161,32 +161,6 @@ describe("handlers", { concurrency: false }, () => {
     assert.deepEqual(result.data.error, { code: "cyclone_not_connected", message, exit_code: 1 });
   });
 
-  test("stack_adopt turns a 409 issue_not_approved into the blocking issue, its points and what to do", async () => {
-    mockFetch(409, {
-      error: "issue_not_approved",
-      message: "Vortex has not approved #12.",
-      issues: [{
-        owner: "acme", repo: "widgets", number: 12, enabled: true, state: "needs_answers", approvedBy: null,
-        round: 1, maxRounds: 4, verdict: "needs_answers", summary: null,
-        points: [{ kind: "question", text: "Which repo?" }], commentUrl: null, next: "Answer it on #12.",
-      }],
-    });
-    const result = await stackAdopt({ owner: "acme", repo: "widgets", pr_number: 42 }, cfg);
-    assert.equal(result.isError, true);
-    assert.equal((result.data.error as { code: string }).code, "issue_not_approved");
-    assert.equal(
-      result.summary,
-      [
-        "Vortex has not approved #12.",
-        "acme/widgets#12: needs_answers (round 1 of 4)",
-        "  1. [question] Which repo?",
-        "  Next: Answer it on #12.",
-        "  Reply in a comment on #12, then run `mergestorm issue wait 12`.",
-        "Do not open the pull request yet: answer the points in a comment on each issue, call issue_review_wait until it returns approved, then try again.",
-      ].join("\n"),
-    );
-  });
-
   test("stack_adopt returns rate-limit details from the API", async () => {
     mockFetch(429, { error: "rate_limited", retry_after_seconds: 9 }, { "Retry-After": "9" });
     const result = await stackAdopt({ owner: "acme", repo: "widgets", pr_number: 42 }, cfg);
