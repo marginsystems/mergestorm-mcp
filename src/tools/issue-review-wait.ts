@@ -43,6 +43,9 @@ export function issueReviewSummary(status: IssueReviewStatus): string {
   const ref = `${status.owner}/${status.repo}#${status.number}`;
   const round = status.round ? ` (round ${status.round} of ${status.maxRounds})` : "";
   const wait = status.wait;
+  if (wait.status === "stalled" && wait.reason === "no_review_started") {
+    return `${ref}: no Vortex review has started, and the pull request stays held until the issue is approved. Tag @mergestorm-vortex once in a comment on the issue to start one, then call issue_review_wait once more without after_round; if no review starts, tell the human.`;
+  }
   if (wait.status === "stalled") {
     const since = wait.minutes !== null ? ` for ${wait.minutes} min` : "";
     return `${ref}: stalled, no new Vortex round${since} (reason: ${wait.reason}). ${issueReviewStallAdvice(wait.reason, status.mode)} Tell the human once and stop; do not call issue_review_wait in a loop.`;

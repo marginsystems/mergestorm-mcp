@@ -109,6 +109,19 @@ test("issue_review_wait reports a stall once with its reason and no next_args", 
   assert.match(result.summary, /^acme\/widgets#12: stalled, no new Vortex round for 15 min \(reason: unchanged\)\. .* Tell the human once and stop/);
 });
 
+test("issue_review_wait gives one instruction when no review ever started: tag Vortex once, then wait once more", async () => {
+  const result = await issueReviewWait({ ...TARGET, timeout_s: 0, waiting_since: new Date(NOW - 3 * 60_000).toISOString() }, CFG, {
+    now: () => NOW,
+    getIssueReview: async () =>
+      status({ state: "unreviewed", verdict: null, points: [], round: null, next: "Open the PR.", wait: { ...waitFor("unreviewed", null), status: "stalled", reason: "no_review_started" } }),
+  });
+  assert.equal(result.data.next_args, undefined);
+  assert.equal(
+    result.summary,
+    "acme/widgets#12: no Vortex review has started, and the pull request stays held until the issue is approved. Tag @mergestorm-vortex once in a comment on the issue to start one, then call issue_review_wait once more without after_round; if no review starts, tell the human.",
+  );
+});
+
 test("issue_review_wait says an untagged issue in mention mode needs no approval", async () => {
   const mention = await issueReviewWait(TARGET, CFG, {
     pollIssueReview: async () => status({ mode: "mention", state: "unreviewed", verdict: null, points: [], round: null, next: "", wait: waitFor("approved", null) }),
