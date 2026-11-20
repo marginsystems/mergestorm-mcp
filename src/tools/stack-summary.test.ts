@@ -31,14 +31,14 @@ describe("stack-blockers", { concurrency: false }, () => {
     });
   }
 
-  test("old server: a Tempest agent run on a layer is not a blocker in the CLI watch or the MCP summary", async () => {
-    const stack = fixture([{ ...base, agentRuns: [{ agent: "tempest", status: "findings", sha: head }] } as unknown as Layer]);
+  test("an unknown agent run on a layer is not a blocker in the CLI watch or the MCP summary", async () => {
+    const stack = fixture([{ ...base, agentRuns: [{ agent: "zephyr", status: "findings", sha: head }] } as unknown as Layer]);
     const result = await pollStackWatch({}, stack.id, { timeoutMs: 0,
       fetch: async (_cfg, route) => ({ status: 200, body: route.includes("/stacks/queue") ? { entries: [] } : { stacks: [stack] } }),
     });
     assert.equal(result.blocker, null);
     assert.deepEqual(result.busy, []);
-    assert.doesNotMatch(stackSummary(stack), /blocked:|Tempest/);
+    assert.doesNotMatch(stackSummary(stack), /blocked:|zephyr/i);
   });
 
   test("MCP Organism summary has pair gate and parked CI issue, not parked DIRTY", () => {

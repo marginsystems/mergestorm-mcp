@@ -44,7 +44,7 @@ import {
 export { MCP_HOSTED_SERVER_INSTRUCTIONS };
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.33";
+export const MCP_SERVER_VERSION = "0.2.34";
 
 export const MCP_TOOL_NAMES = [
   "whoami",

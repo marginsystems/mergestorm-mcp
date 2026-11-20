@@ -6,16 +6,6 @@ import {
 } from "mergestorm/client";
 import type { ToolPayload } from "./types.js";
 
-export const MCP_REVIEW_STATUSES = [
-  "no_changes",
-  "queued",
-  "in_progress",
-  "completed",
-  "failed",
-  "quota_exceeded",
-  "rate_limited",
-] as const;
-
 export function payloadFromRow(
   row: ReviewJobRow | null,
   fallback: ReviewEnvelopeFallbacks = {},

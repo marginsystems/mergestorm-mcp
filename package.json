@@ -1,6 +1,7 @@
 {
   "name": "mergestorm-mcp",
-  "version": "0.2.31",
+  "version": "0.2.34",
+  "mcpName": "io.github.marginsystems/mergestorm",
   "description": "Mergestorm MCP server — identity, review, and read-only stack tools over stdio",
   "license": "MIT",
   "type": "module",
@@ -39,7 +40,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "mergestorm": "0.3.68",
+    "mergestorm": "0.3.71",
     "zod": "^3.24.2"
   },
   "devDependencies": {

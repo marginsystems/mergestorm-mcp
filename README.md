@@ -107,7 +107,7 @@ For global `~/.cursor/mcp.json`, use an explicit sandbox path. Authentication us
 
 ### Hosted endpoint
 
-The same server runs over Streamable HTTP at `https://api.mergestorm.ai/api/v1/mcp`. Send your `mg login` key (or any Mergestorm API key) as `Authorization: Bearer <key>` on every request; each request acts only as that key's account. The endpoint is stateless (POST only, no session) and has the API's rate limit and a 256 KiB request cap. It offers every tool except the ones that read a local checkout: `review_submit`, `stack_publish` and `stack_publish_status`, and `issue_create` there needs `owner` and `repo`.
+The same server runs over Streamable HTTP at `https://api.mergestorm.ai/api/v1/mcp`. MCP clients that support OAuth sign in on their own: `claude mcp add --transport http mergestorm https://api.mergestorm.ai/api/v1/mcp` opens a Mergestorm sign-in page, and approving it gives the client an API key named after it (for example `Claude Code (MCP)`), which you can revoke in Settings → API keys. The endpoint answers an unauthenticated request with `401` and `WWW-Authenticate: Bearer resource_metadata="…"`, and publishes OAuth 2.1 metadata (RFC 9728, RFC 8414), dynamic client registration (RFC 7591) and the PKCE (S256) authorization-code flow. Clients without OAuth send your `mg login` key (or any Mergestorm API key) as `Authorization: Bearer <key>` on every request. Either way, each request acts only as that key's account. The endpoint is stateless (POST only, no session) and has the API's rate limit and a 256 KiB request cap. It offers every tool except the ones that read a local checkout: `review_submit`, `stack_publish` and `stack_publish_status`, and `issue_create` there needs `owner` and `repo`.
 
 ### Connection and watch checks
 

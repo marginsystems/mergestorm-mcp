@@ -382,20 +382,6 @@ describe("handlers", { concurrency: false }, () => {
     assert.match(result.summary, /blocked: #99 ci_failure on land PR #99$/);
   });
 
-  test("old server: stack_status names a Tempest land gate by the server's text and ignores tempestLandStatus and Tempest runs", async () => {
-    const unit = { state: "growing", landPrNumber: 99, tempestLandStatus: "failed", members: [],
-      landPr: { prNumber: 99, state: "clean", headSha: "aaaaaaa", tempestStatus: "findings",
-        agentRuns: [{ agent: "tempest", status: "findings", sha: "aaaaaaa" }] } };
-    mockFetch(200, { stacks: [{ id: "old-server-stack", owner: "acme", repo: "widgets", layers: [],
-      unit: { ...unit, landingBlockReason: "landing blocked: tempest_findings on land PR #99" } }] });
-    const blocked = await stackStatus("old-server-stack", cfg);
-    assert.match(blocked.summary, /blocked: #99 landing blocked: tempest_findings on land PR #99$/);
-    mockFetch(200, { stacks: [{ id: "old-server-stack", owner: "acme", repo: "widgets", layers: [],
-      unit: { ...unit, landingBlockReason: null } }] });
-    const quiet = await stackStatus("old-server-stack", cfg);
-    assert.doesNotMatch(quiet.summary, /blocked:|Tempest/i);
-  });
-
   test("stack_status never lets a recoverable bounce suppress current-head project CI failure", async () => {
     const stack = {
       id: "moved-stack", owner: "acme", repo: "widgets",
