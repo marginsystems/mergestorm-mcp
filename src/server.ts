@@ -44,7 +44,7 @@ import {
 export { MCP_HOSTED_SERVER_INSTRUCTIONS };
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.34";
+export const MCP_SERVER_VERSION = "0.2.35";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -253,14 +253,26 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Submit review",
       description:
-        "Submit a local git diff (or an explicit diff) as a Mergestorm review job. Does not wait by default; returns job_id immediately after submission. Explicit wait: true polls one 45s slice by default. Record job_id and loop review_wait until done. Do not pass 300; hosts drop long MCP calls. On rate_limited, wait retry_after_seconds and inspect or wait for an in-flight review before resubmitting. specialists may be security, performance, architecture, tests, data, api, frontend. governance and seam cannot be requested.",
+        "Submit a local git diff (or an explicit diff) as a Mergestorm review job. Does not wait by default; returns job_id immediately after submission. Explicit wait: true polls one 45s slice by default. Record job_id and loop review_wait until done. Do not pass 300; hosts drop long MCP calls. On rate_limited, wait retry_after_seconds and inspect or wait for an in-flight review before resubmitting. swarm picks how many models run the first review; omit it to use the account's saved swarm mode.",
       inputSchema: {
         cwd: z.string().optional(),
         base: z.string().optional(),
         head: z.string().optional(),
         diff: z.string().optional(),
-        router: z.enum(["off", "standard", "max", "manual"]).optional(),
-        specialists: z.array(z.string().min(1)).max(5).optional(),
+        swarm: z
+          .enum(["off", "normal", "max"])
+          .optional()
+          .describe(
+            "Swarm mode for this review. off: Haiku alone, 1 credit. normal: Haiku and Luna, every finding posted with duplicates merged, 2 credits. max: Haiku, Luna and DeepSeek, only findings at least two models agree on, 3 credits. Swarm needs an active paid plan; without one the review runs as off. Omit to use the account's saved swarm mode.",
+          ),
+        router: z
+          .string()
+          .optional()
+          .describe("Ignored. Vortex specialists were replaced by swarm mode; use swarm instead."),
+        specialists: z
+          .array(z.string())
+          .optional()
+          .describe("Ignored. Vortex specialists were replaced by swarm mode; use swarm instead."),
         context: z.string().optional(),
         context_files: z.array(z.string().min(1)).max(10).optional(),
         thread: z.string().min(1).max(120).optional(),

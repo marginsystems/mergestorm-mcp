@@ -30,30 +30,6 @@ export const MCP_WAIT_CEILING_S = 300;
  */
 export const MCP_PR_WAIT_DEFAULT_S = 45;
 
-/** Pinnable L0 lanes. `governance` and `seam` are L1 and cannot be requested. */
-const PINNABLE_SPECIALISTS = [
-  "security",
-  "performance",
-  "architecture",
-  "tests",
-  "data",
-  "api",
-  "frontend",
-] as const;
-
-function assertPinnableSpecialists(specialists: string[] | undefined): void {
-  if (!specialists?.length) return;
-  const unknown = specialists.filter(
-    (id) => !(PINNABLE_SPECIALISTS as readonly string[]).includes(id),
-  );
-  if (unknown.length === 0) return;
-  throw new CommandError(
-    `Unknown specialist: ${unknown.join(", ")}. Valid lanes: ${PINNABLE_SPECIALISTS.join(", ")}. governance and seam cannot be requested.`,
-    2,
-    "usage",
-  );
-}
-
 /**
  * Host-configured root that agent-chosen `context_files` may not escape.
  * The `cwd` tool argument is agent-controlled, so it cannot serve as the
@@ -68,6 +44,7 @@ export type ReviewSubmitInput = {
   base?: string;
   head?: string;
   diff?: string;
+  swarm?: "off" | "normal" | "max";
   router?: string;
   specialists?: string[];
   context?: string;
@@ -145,7 +122,6 @@ export async function reviewSubmit(
   const resolved = cfg ?? (await loadConfig());
   const wait = input.wait === true;
   const timeoutMs = waitTimeoutMs(input.timeout_s);
-  assertPinnableSpecialists(input.specialists);
 
   if (input.thread && !REVIEW_THREAD_SLUG_RE.test(input.thread)) {
     throw new CommandError("thread must be 1–120 chars [A-Za-z0-9._/-]", 2, "usage");
@@ -172,8 +148,7 @@ export async function reviewSubmit(
   });
 
   const submitted = await submitReview(resolved, collected, {
-    routerMode: input.router,
-    specialists: input.specialists,
+    swarm: input.swarm,
     context: extras.context,
     contextFiles: extras.contextFiles,
     idempotencyKey: input.idempotency_key,

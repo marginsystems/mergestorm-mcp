@@ -1,4 +1,4 @@
-import { CommandError,REVIEW_JOB_ENVELOPE_SCHEMA } from "mergestorm/client";
+import { REVIEW_JOB_ENVELOPE_SCHEMA } from "mergestorm/client";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir,mkdtemp,rm,writeFile } from "node:fs/promises";
@@ -299,42 +299,33 @@ describe("review-write", { concurrency: false }, () => {
       }
     });
 
-    test("review_submit rejects governance and seam locally (#1461)", async () => {
-      const f = await repoWithReviewDiff("mcp-gov-");
+    test("review_submit sends swarm and drops the retired router and specialists inputs", async () => {
+      const f = await repoWithReviewDiff("mcp-swarm-");
       process.env.MERGESTORM_SANDBOX_ROOT = f.root;
       try {
         const mock = mockReviewFetch([
-          { status: 400, body: { error: "invalid_specialists" } },
+          { status: 202, body: { job_id: "job_swarm", status: "queued", swarm_mode: "max", swarm_models: [] } },
         ]);
-        await assert.rejects(
-          () =>
-            reviewSubmit(
-              {
-                cwd: f.repo,
-                base: "main",
-                wait: false,
-                specialists: ["governance"],
-              },
-              cfg,
-            ),
-          (err: unknown) =>
-            err instanceof CommandError && /governance and seam cannot be requested/.test(err.message),
+        const result = await reviewSubmit(
+          {
+            cwd: f.repo,
+            base: "main",
+            wait: false,
+            swarm: "max",
+            router: "manual",
+            specialists: ["governance", "seam"],
+          },
+          cfg,
         );
-        await assert.rejects(
-          () =>
-            reviewSubmit(
-              {
-                cwd: f.repo,
-                base: "main",
-                wait: false,
-                specialists: ["seam"],
-              },
-              cfg,
-            ),
-          (err: unknown) =>
-            err instanceof CommandError && /Unknown specialist: seam/.test(err.message),
-        );
-        assert.equal(mock.calls(), 0);
+        assert.equal(mock.calls(), 1);
+        const payload = mock.posts()[0] as Record<string, unknown>;
+        assert.equal(payload.swarm, "max");
+        assert.equal("router_mode" in payload, false);
+        assert.equal("specialists" in payload, false);
+        assert.equal(result.data.swarm_mode, "max");
+        assert.deepEqual(result.data.swarm_models, []);
+        await reviewSubmit({ cwd: f.repo, base: "main", wait: false }, cfg);
+        assert.equal("swarm" in (mock.posts()[1] as Record<string, unknown>), false);
       } finally {
         await rm(f.root, { recursive: true, force: true });
         delete process.env.MERGESTORM_SANDBOX_ROOT;

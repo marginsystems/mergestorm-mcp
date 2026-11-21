@@ -109,6 +109,7 @@ describe("handlers", { concurrency: false }, () => {
     cyclone_skip_ci_enabled: true,
     cyclone_patch_unverified_languages: false,
     vortex_seam_specialist_enabled: true,
+    vortex_governance_specialist_enabled: false,
     auto_land_default: false,
     auto_land_settle_seconds: 60,
     merge_queue_batch_enabled: false,
@@ -135,6 +136,29 @@ describe("handlers", { concurrency: false }, () => {
       assert.deepEqual(result.structuredContent, { error: { message: "Live account details unavailable. Could not verify account with /me.", exit_code: 1 } });
       assert.match(JSON.stringify(result.content), /Live account details unavailable/);
       assert.doesNotMatch(JSON.stringify(result), /key_prefix|usage/);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  test("review_submit offers swarm and keeps router and specialists as ignored inputs", async () => {
+    const server = createMergestormMcpServer();
+    const client = new Client({ name: "review-submit-schema-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === "review_submit");
+      assert.ok(tool);
+      const props = tool.inputSchema.properties as Record<string, { enum?: string[]; description?: string }>;
+      assert.deepEqual(props.swarm?.enum, ["off", "normal", "max"]);
+      assert.match(props.swarm?.description ?? "", /2 credits/);
+      assert.match(props.router?.description ?? "", /^Ignored\./);
+      assert.match(props.specialists?.description ?? "", /^Ignored\./);
+      assert.equal(props.router?.enum, undefined);
+      assert.doesNotMatch(tool.description ?? "", /governance and seam cannot be requested/);
     } finally {
       await client.close();
       await server.close();

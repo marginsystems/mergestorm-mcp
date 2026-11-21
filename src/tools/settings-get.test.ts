@@ -55,6 +55,7 @@ describe("handlers", { concurrency: false }, () => {
     cyclone_skip_ci_enabled: true,
     cyclone_patch_unverified_languages: false,
     vortex_seam_specialist_enabled: true,
+    vortex_governance_specialist_enabled: false,
     auto_land_default: false,
     auto_land_settle_seconds: 60,
     merge_queue_batch_enabled: false,
