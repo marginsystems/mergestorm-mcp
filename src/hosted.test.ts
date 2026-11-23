@@ -59,7 +59,7 @@ test("hosted whoami answers as the calling key, never the process MERGESTORM_API
   assert.notEqual(result.isError, true);
   const data = result.structuredContent as Record<string, unknown>;
   assert.equal(data.key_prefix, "msk_live_call");
-  assert.equal(data.api_base, api.base);
+  assert.equal(data.api_base, null);
   assert.equal(data.config_path, null);
   assert.deepEqual(api.seen, [{ url: "/api/v1/me", authorization: `Bearer ${CALLER_KEY}` }]);
 });

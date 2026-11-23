@@ -142,6 +142,54 @@ describe("handlers", { concurrency: false }, () => {
     }
   });
 
+  test("every tool carries annotations.title and every input property declares a type", async () => {
+    for (const hosted of [false, true]) {
+      const server = createMergestormMcpServer({ hosted, chatId: null, config: { apiKey: "msk_live_x", apiBase: "http://127.0.0.1:1", ignoreEnv: true } });
+      const client = new Client({ name: "directory-check-test", version: "1.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      try {
+        await server.connect(serverTransport);
+        await client.connect(clientTransport);
+        const { tools } = await client.listTools();
+        assert.ok(tools.length > 0);
+        for (const tool of tools) {
+          assert.ok(tool.title, tool.name);
+          assert.equal(tool.annotations?.title, tool.title, tool.name);
+          const props = (tool.inputSchema.properties ?? {}) as Record<string, Record<string, unknown>>;
+          for (const [key, schema] of Object.entries(props)) {
+            const typed = "type" in schema || "anyOf" in schema || "oneOf" in schema || "enum" in schema || "const" in schema;
+            assert.ok(typed, `${tool.name}.${key}`);
+          }
+        }
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    }
+  });
+
+  test("hosted tool descriptions state facts about Mergestorm instead of directing GitHub actions", async () => {
+    const server = createMergestormMcpServer({ hosted: true, chatId: null, config: { apiKey: "msk_live_x", apiBase: "http://127.0.0.1:1", ignoreEnv: true } });
+    const client = new Client({ name: "directory-directive-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const { tools } = await client.listTools();
+      for (const tool of tools) {
+        for (const phrase of [/poll GitHub/i, /do not open a pull request/i, /Open the pull request only/i, /answer in ONE/i, /so post yours/i]) {
+          assert.doesNotMatch(tool.description ?? "", phrase, tool.name);
+        }
+      }
+      const issueCreate = tools.find((t) => t.name === "issue_create");
+      assert.match(issueCreate?.description ?? "", /issue_review_wait reports whether the issue is approved\./);
+      assert.doesNotMatch(issueCreate?.description ?? "", /refuses a pull request/);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   test("review_submit offers swarm and keeps router and specialists as ignored inputs", async () => {
     const server = createMergestormMcpServer();
     const client = new Client({ name: "review-submit-schema-test", version: "1.0.0" });

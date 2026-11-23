@@ -70,6 +70,20 @@ describe("handlers", { concurrency: false }, () => {
     assert.equal(result.data.schema, undefined);
   });
 
+  test("whoami reports the configured api base for a local config", async () => {
+    mockFetch(200, meBody);
+    const result = await whoami(cfg);
+    assert.equal(result.data.api_base, "https://api.example.test");
+  });
+
+  test("whoami hides the internal api base and config path on the hosted server", async () => {
+    mockFetch(200, meBody);
+    const result = await whoami({ ...cfg, apiBase: "http://127.0.0.1:31811", ignoreEnv: true });
+    assert.equal(result.data.api_base, null);
+    assert.equal(result.data.config_path, null);
+    assert.doesNotMatch(JSON.stringify(result), /127\.0\.0\.1/);
+  });
+
   test("whoami reports the running server version so a stale MCP process is visible", async () => {
     mockFetch(200, meBody);
     const result = await whoami(cfg, "9.9.9");

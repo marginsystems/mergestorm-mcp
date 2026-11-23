@@ -44,7 +44,7 @@ import {
 export { MCP_HOSTED_SERVER_INSTRUCTIONS };
 
 export const MCP_SERVER_NAME = "mergestorm";
-export const MCP_SERVER_VERSION = "0.2.35";
+export const MCP_SERVER_VERSION = "0.2.36";
 
 export const MCP_TOOL_NAMES = [
   "whoami",
@@ -163,7 +163,7 @@ const HOSTED_STACK_WAIT_DESCRIPTION =
   "Wait up to timeout_s (1-45) for a stack to need attention, or read it once with 0. Returns a mergestorm.stack_watch/v1 envelope: attention names the PR, blocker and repair; waiting or in_progress means call again with watch.next.args; watch.done true means stop (landed, closed, archived or gone).";
 
 const HOSTED_ISSUE_CREATE_DESCRIPTION =
-  "Open a GitHub issue through Mergestorm with no GitHub credentials: the Surge App creates it and names you in the body. Use it for the issue a pull request must have before it is opened, then put Fixes #<number> in the commit or pull request body. owner and repo name the repository. labels must already exist on the repository; an unknown one is refused with unknown_label and nothing is created. Calling it again with the same title returns the open issue it already made (created: false) when that issue is among the newest 100 open issues of the repository; an older one, or two calls at the same time, can still create a duplicate, so check the returned number before retrying after a lost response. Needs write access to the repository through your linked GitHub account and Surge installed on it. After creating it, call issue_review_wait with the returned number and do not open a pull request until the issue is approved: reply once in an issue comment, accepting each blocking point's suggested fix or saying why not (notes do not block; Vortex re-checks the blocking points once and approves), then call issue_review_wait again.";
+  "Open a GitHub issue through Mergestorm with no GitHub credentials: the Surge App creates it and names you in the body. A pull request links the issue with Fixes #<number> in its commit or body. owner and repo name the repository. labels must already exist on the repository; an unknown one is refused with unknown_label and nothing is created. Calling it again with the same title returns the open issue it already made (created: false) when that issue is among the newest 100 open issues of the repository; an older one, or two calls at the same time, can still create a duplicate, so check the returned number before retrying after a lost response. Needs write access to the repository through your linked GitHub account and Surge installed on it. issue_review_wait reports whether the issue is approved. Vortex re-checks the blocking points once after one issue comment from the author or a maintainer that accepts each suggested fix or says why not, then approves; notes do not block.";
 
 export function createMergestormMcpServer(options: MergestormMcpServerOptions = {}): McpServer {
   const { config, hosted = false } = options;
@@ -194,14 +194,17 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
   const waitMaxS = hosted ? HOSTED_WAIT_MAX_S : 300;
   const addTool: typeof registerTool = (name, toolConfig, cb) => {
     if (hosted && (MCP_WORKSPACE_TOOL_NAMES as readonly string[]).includes(name)) return;
-    registerTool(name, toolConfig, hosted ? async (...args: any[]) => hostedToolResult((await cb(...args)) as ReturnType<typeof ok>) : cb);
+    const titled = toolConfig.annotations && toolConfig.title
+      ? { ...toolConfig, annotations: { ...toolConfig.annotations, title: toolConfig.title } }
+      : toolConfig;
+    registerTool(name, titled, hosted ? async (...args: any[]) => hostedToolResult((await cb(...args)) as ReturnType<typeof ok>) : cb);
   };
 
   addTool(
     "whoami",
     {
       title: "Who am I",
-      description: "The Mergestorm account this key belongs to (GitHub login or email), the key prefix, plan, API base, and the version of this running mergestorm-mcp server.",
+      description: "The Mergestorm account this key belongs to (GitHub login or email), the key prefix, plan, API base (local server only; null on the hosted server), and the version of this running mergestorm-mcp server.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async () => {
@@ -466,7 +469,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
       title: "Open GitHub issue",
       description: hosted
         ? HOSTED_ISSUE_CREATE_DESCRIPTION
-        : "Open a GitHub issue through Mergestorm with no GitHub credentials: the Surge App creates it and names you in the body. Use it for the issue a pull request must have before it is opened, then put Fixes #<number> in the commit or pull request body. Defaults to the origin repository of cwd; pass owner and repo together to name another. labels must already exist on the repository; an unknown one is refused with unknown_label and nothing is created. Calling it again with the same title returns the open issue it already made (created: false) when that issue is among the newest 100 open issues of the repository; an older one, or two calls at the same time, can still create a duplicate, so check the returned number before retrying after a lost response. Needs write access to the repository through your linked GitHub account and Surge installed on it. After creating it, call issue_review_wait with the returned number and do not open a pull request until the issue is approved: reply once in an issue comment, accepting each blocking point's suggested fix or saying why not (notes do not block; Vortex re-checks the blocking points once and approves), then call issue_review_wait again.",
+        : "Open a GitHub issue through Mergestorm with no GitHub credentials: the Surge App creates it and names you in the body. A pull request links the issue with Fixes #<number> in its commit or body. Defaults to the origin repository of cwd; pass owner and repo together to name another. labels must already exist on the repository; an unknown one is refused with unknown_label and nothing is created. Calling it again with the same title returns the open issue it already made (created: false) when that issue is among the newest 100 open issues of the repository; an older one, or two calls at the same time, can still create a duplicate, so check the returned number before retrying after a lost response. Needs write access to the repository through your linked GitHub account and Surge installed on it. stack_publish refuses a pull request whose linked issue is not approved on an auto-mode repository; issue_review_wait reports whether it is approved. Vortex re-checks the blocking points once after one issue comment from the author or a maintainer that accepts each suggested fix or says why not, then approves; notes do not block.",
       inputSchema: hosted ? hostedIssueCreateSchema : issueCreateSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -484,7 +487,7 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
     {
       title: "Wait for issue review",
       description:
-        "Wait for the next Vortex verdict on a GitHub issue. Returns the review state (approved, needs_answers, pending, unreviewed or off), the round, the verdict, the summary, up to 8 points, the review comment link, next (one sentence saying what to do), wait.status and, while there is more to wait for, next_args. wait.status is answered_waiting_for_round (Vortex has an answer after the last verdict and the next round has not finished; with wait.reason answer_not_seen Vortex has no answer after the verdict yet, so post yours), round_running, points (a verdict with points to answer), approved (approved, off, a failed review, the round cap, or unreviewed on a mention-mode repo) or stalled (no round started: about 10 minutes after a queued answer, at once when an answer failed or was skipped without starting a round, about 2 minutes into the wait when no review has started at all (wait.reason no_review_started), or about 10 minutes after the verdict with no answer seen once the wait is at least 2 minutes old; wait.reason says why). timeout_s: 0 reads it once; otherwise it waits for one slice of up to 45s (the default). Call it again with exactly next_args: after_round is the round whose verdict you already saw, so the stale verdict is never returned again, and waiting_since carries the stall clock across slices. Open the pull request only on approved, or when the summary says the issue needs no approval (issue reviews off, or unreviewed on a mention-mode repo). On points, answer in ONE new comment on the issue as the author or a maintainer: for each blocking point, accept its suggested fix or say why not (notes do not block). On a mention-mode repo the comment must tag @mergestorm-vortex and the next round starts at once; on an auto-mode repo it starts about 90s later. Editing the body or an earlier comment starts nothing. Then call once with next_args. On stalled, follow the summary's advice for wait.reason and do not loop on this tool. Never poll GitHub or loop on this tool beyond next_args. A person can also approve with an issue comment whose first line is mergestorm-issue: approve.",
+        "Wait for the next Vortex verdict on a GitHub issue. Returns the review state (approved, needs_answers, pending, unreviewed or off), the round, the verdict, the summary, up to 8 points, the review comment link, next (one sentence saying what to do), wait.status and, while there is more to wait for, next_args. wait.status is answered_waiting_for_round (Vortex has an answer after the last verdict and the next round has not finished; with wait.reason answer_not_seen Vortex has no answer after the verdict yet), round_running, points (a verdict with points to answer), approved (approved, off, a failed review, the round cap, or unreviewed on a mention-mode repo) or stalled (no round started: about 10 minutes after a queued answer, at once when an answer failed or was skipped without starting a round, about 2 minutes into the wait when no review has started at all (wait.reason no_review_started), or about 10 minutes after the verdict with no answer seen once the wait is at least 2 minutes old; wait.reason says why). timeout_s: 0 reads it once; otherwise it waits for one slice of up to 45s (the default). Call it again with exactly next_args: after_round is the round whose verdict you already saw, so the stale verdict is never returned again, and waiting_since carries the stall clock across slices. approved, or a summary saying the issue needs no approval (issue reviews off, or unreviewed on a mention-mode repo), means the issue is ready for its pull request. Vortex re-checks a points verdict after one new comment from the author or a maintainer that accepts each blocking point's suggested fix or says why not; notes do not block. Vortex starts that round at once when the comment tags @mergestorm-vortex on a mention-mode repository, and about 90 seconds after the comment on an auto-mode repository; edits to the body or earlier comments start nothing. After that comment, call once with next_args. On stalled, follow the summary's advice for wait.reason and do not loop on this tool. next_args is all the polling a round needs. A person can also approve with an issue comment whose first line is mergestorm-issue: approve.",
       inputSchema: issueReviewWaitSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -797,8 +800,8 @@ export function createMergestormMcpServer(options: MergestormMcpServerOptions = 
           ]),
         ),
         // Preserve these args so the handler rejects them even alongside a writable key.
-        cyclone_connected: z.unknown().optional(),
-        github_connected: z.unknown().optional(),
+        cyclone_connected: z.boolean().optional().describe("Read-only. Sending it refuses the whole call."),
+        github_connected: z.boolean().optional().describe("Read-only. Sending it refuses the whole call."),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },

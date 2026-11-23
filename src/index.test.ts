@@ -73,7 +73,11 @@ describe("stdio", { concurrency: false }, () => {
         [...MCP_TOOL_NAMES].sort(),
       );
       assert.equal(listed.tools.length, 37);
-      const annotations = Object.fromEntries(listed.tools.map((tool) => [tool.name, tool.annotations]));
+      for (const tool of listed.tools) assert.equal(tool.annotations?.title, tool.title, tool.name);
+      const annotations = Object.fromEntries(listed.tools.map((tool) => {
+        const { title: _title, ...hints } = tool.annotations ?? {};
+        return [tool.name, hints];
+      }));
       for (const name of [
         "whoami", "credits", "review_list", "review_wait", "review_wait_pr", "stack_list",
         "stack_status", "stack_wait", "queue_status", "settings_get", "stack_publish_status", "repo_settings_get", "cyclone_job", "issue_review_wait",
@@ -159,7 +163,7 @@ describe("stdio", { concurrency: false }, () => {
       assert.equal(invalid.isError, true);
       const queueStatus = listed.tools.find((tool) => tool.name === "queue_status");
       assert.ok(queueStatus);
-      assert.deepEqual(queueStatus.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+      assert.deepEqual(queueStatus.annotations, { title: "Get merge queue status", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true });
       assert.deepEqual(queueStatus.inputSchema.required, undefined);
       assert.equal(
         (queueStatus.inputSchema.properties?.stack_id as { type?: string } | undefined)?.type,

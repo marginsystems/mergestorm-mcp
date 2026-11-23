@@ -1,15 +1,17 @@
 {
   "name": "mergestorm-mcp",
-  "version": "0.2.35",
+  "version": "0.2.36",
   "mcpName": "io.github.marginsystems/mergestorm",
-  "description": "Mergestorm MCP server — identity, review, and read-only stack tools over stdio",
+  "description": "Mergestorm MCP server — the software factory for your AI agents over stdio: issue and PR reviews, fixes, stacks, Auto land and the merge queue",
   "license": "MIT",
   "type": "module",
   "author": "Margin Systems <hello@mergestorm.ai>",
   "keywords": [
     "mergestorm",
     "mcp",
-    "code-review"
+    "code-review",
+    "software-factory",
+    "ai-agents"
   ],
   "bin": {
     "mergestorm-mcp": "./dist/index.js"

@@ -33,7 +33,7 @@ export async function whoami(cfg?: Config, serverVersion?: string): Promise<Tool
     key_name: me.key.name ?? null,
     plan_key: me.plan_key ?? null,
     plan_label_key: me.plan_label_key ?? null,
-    api_base: apiBase(resolved),
+    api_base: resolved.ignoreEnv ? null : apiBase(resolved),
     config_path: resolved.ignoreEnv ? null : configPath(),
     usage: me.usage ?? null,
     mcp_server_version: serverVersion ?? null,
